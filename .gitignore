@@ -1,4 +1,5 @@
 # Data folder
-data/
 
-.venv
+
+.venv/
+data/

@@ -1,9 +1,5 @@
 import numpy as np
 import pandas as pd
-from pathlib import Path
-
-from build_contracts import add_contract_id
-from churn import compute_contract_churn_3m
 
 
 BEHAVIOR_COLS = [
@@ -32,48 +28,13 @@ TREND_COLS = [
 ]
 
 
-def prepare_fct(df_fct):
-    """Limpieza del snapshot mensual: conversion de period_int y filtrado basico."""
-    df = df_fct.copy()
-    df["period_int"] = pd.to_datetime(
-        df["period_int"].astype(str), format="%Y%m"
-    ).dt.to_period("M")
-    # Hay 2 registros con facturacion negativa (devoluciones)
-    df = df[df["monthly_total_invoice"] >= 0]
-    return df
-
-
-def filter_left_censored(df, df_dim, observation_start="2023-01"):
-    """Quita contratos que ya existian antes de que empiecen los datos.
-
-    Si el primer mes activo de un contrato es ene-2023 (primer mes del dataset)
-    y en dim vemos que min_start_contrato_date < 2023, ese contrato ya llevaba
-    tiempo activo y no podemos usar sus "primeros 3 meses" como onboarding real.
-    """
-    obs_start = pd.Period(observation_start, freq="M")
-
-    active = df[df["contract_id"].notna()]
-    first_month = (
-        active.groupby("contract_id")
-        .agg(first_period=("period_int", "min"),
-             advertiser_zrive_id=("advertiser_zrive_id", "first"))
-    )
-
-    # Contratos que arrancan justo en el primer mes de datos
-    suspects = first_month[first_month["first_period"] == obs_start]
-
-    dim_dates = df_dim[["advertiser_zrive_id", "min_start_contrato_date"]].copy()
-    dim_dates["started_before"] = (
-        pd.to_datetime(dim_dates["min_start_contrato_date"])
-        < pd.Timestamp(observation_start)
-    )
-
-    suspects = suspects.reset_index().merge(dim_dates, on="advertiser_zrive_id", how="left")
-    to_remove = suspects.loc[suspects["started_before"] == True, "contract_id"].values
-
-    df = df.copy()
-    df.loc[df["contract_id"].isin(to_remove), "contract_id"] = None
-    return df
+def compute_contract_churn_3m(df):
+    """Etiqueta contratos como churned si duran <= 3 meses."""
+    out = df.copy()
+    contract_duration = out.groupby("contract_id").size()
+    short_contracts = contract_duration.loc[lambda x: x <= 3].index
+    out["churned_3m"] = out["contract_id"].isin(short_contracts).astype(int)
+    return out
 
 
 def get_first_n_months(df, n=3):
@@ -101,15 +62,12 @@ def compute_behavior_features(df_first_months):
 
     agg = df_first_months.groupby("contract_id")[BEHAVIOR_COLS].mean()
 
-    # Para la media de facturacion, ignoramos meses con invoice=0 (6.4% de los activos)
-    # porque distorsionan la media hacia abajo
     tmp = df_first_months.copy()
     tmp.loc[tmp["monthly_total_invoice"] == 0, "monthly_total_invoice"] = np.nan
     agg["monthly_total_invoice"] = (
         tmp.groupby("contract_id")["monthly_total_invoice"].mean().fillna(0)
     )
 
-    # Ratios
     agg["usage_ratio"] = (
         agg["monthly_published_ads"] / agg["monthly_contracted_ads"].replace(0, np.nan)
     ).clip(upper=1.0)
@@ -127,7 +85,6 @@ def compute_behavior_features(df_first_months):
         / agg["monthly_published_ads"].replace(0, np.nan)
     )
 
-    # Tendencias: pendiente de las metricas clave durante los primeros meses
     for col in TREND_COLS:
         agg[f"{col}_trend"] = (
             df_first_months.groupby("contract_id")
@@ -164,7 +121,6 @@ def add_contract_metadata(df_features, df_contracts, df_dim, last_period="2025-0
         contract_start=("period_int", "min"),
         contract_end=("period_int", "max"),
     )
-    # Si el contrato llega hasta el ultimo mes de datos, no sabemos si seguira o no
     info["is_right_censored"] = info["contract_end"] == last_p
 
     out = df_features.join(info)
@@ -174,57 +130,3 @@ def add_contract_metadata(df_features, df_contracts, df_dim, last_period="2025-0
     out = out.merge(dim_cols, on="advertiser_zrive_id", how="left")
 
     return out
-
-
-def build_modeling_dataset(data_path, n_months=3):
-    """Pipeline completo de datos a dataset de modelado.
-
-    Carga los parquets, identifica contratos, filtra left-censored,
-    calcula features de los primeros n meses y los dos targets:
-    churn binario y precio estable post-onboarding.
-    """
-    df_dim = pd.read_parquet(data_path / "zrive_dim_advertiser.parquet")
-    df_fct = pd.read_parquet(
-        data_path / "zrive_fct_monthly_snapshot_advertiser.parquet"
-    )
-
-    df_fct = prepare_fct(df_fct)
-    df_fct = add_contract_id(df_fct)
-    df_fct = compute_contract_churn_3m(df_fct)
-    df_fct = filter_left_censored(df_fct, df_dim)
-
-    df_first = get_first_n_months(df_fct, n=n_months)
-    df_features = compute_behavior_features(df_first)
-
-    # Targets
-    df_stable = compute_stable_price(df_fct, n_months=n_months)
-    df_features = df_features.join(df_stable, how="left")
-
-    churn = (
-        df_fct[df_fct["contract_id"].notna()]
-        .groupby("contract_id")["churned_3m"].first()
-    )
-    df_features["churned_3m"] = churn
-
-    df_final = add_contract_metadata(df_features, df_fct, df_dim)
-    return df_final
-
-
-if __name__ == "__main__":
-    data_path = Path(__file__).resolve().parent.parent.parent / "data"
-    df = build_modeling_dataset(data_path)
-
-    print(f"Dataset: {df.shape[0]} contratos x {df.shape[1]} columnas")
-
-    print(f"\nTargets:")
-    print(f"  Churn <=3m: {df['churned_3m'].mean():.1%}")
-    nc = df[df["churned_3m"] == 0]
-    print(f"  Precio estable (no churned): media={nc['stable_price'].mean():.0f}, "
-          f"mediana={nc['stable_price'].median():.0f}")
-
-    print(f"\nCensoring:")
-    print(f"  Right-censored: {df['is_right_censored'].sum()} ({df['is_right_censored'].mean():.1%})")
-
-    print(f"\nSanity checks:")
-    print(f"  NaN en stable_price: {df['stable_price'].isna().sum()}")
-    print(f"  usage_ratio > 1: {(df['usage_ratio'] > 1).sum()}")

@@ -31,8 +31,14 @@ TREND_COLS = [
 def compute_contract_churn_3m(df):
     """Etiqueta contratos como churned si duran <= 3 meses."""
     out = df.copy()
-    contract_duration = out.groupby("contract_id").size()
-    short_contracts = contract_duration.loc[lambda x: x <= 3].index
+    contract_duration = (
+        out.groupby("contract_id")
+        .size()
+        .reset_index(name="duration")
+    )
+    short_contracts = contract_duration.loc[
+        contract_duration["duration"] <= 3, "contract_id"
+    ]
     out["churned_3m"] = out["contract_id"].isin(short_contracts).astype(int)
     return out
 

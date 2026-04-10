@@ -1,6 +1,23 @@
-# Data folder
-
-
-.venv/
-data/
+/data/
 EDA_jtc_files
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks
+
+# Virtual env
+.venv/
+env/
+venv/
+
+# OS
+.DS_Store
+
+# Logs
+*.log

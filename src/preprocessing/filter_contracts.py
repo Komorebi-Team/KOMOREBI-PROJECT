@@ -3,7 +3,7 @@ import numpy as np
 import logging
 from typing import Optional
 
-from src.preprocessing.utils import validate_columns
+from src.utils import validate_columns
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(

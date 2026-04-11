@@ -3,5 +3,5 @@ from .feature_engineering import (
     get_first_n_months,
     compute_behavior_features,
     compute_stable_price,
-    add_contract_metadata,
+    add_contract_metadata
 )

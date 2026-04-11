@@ -16,21 +16,34 @@ def run_feature_engineering_pipeline(
     """
     Ejecuta el pipeline de feature engineering sobre los contratos preprocesados.
 
+    A partir del dataframe mensual de salida del preprocessing, el pipeline:
+    1. calcula la etiqueta de churn contractual para el horizonte `n_months`
+    2. selecciona los primeros `n_months` meses de cada contrato
+    3. construye features agregadas de comportamiento a nivel contrato
+    4. calcula el precio estable post-onboarding
+    5. añade la etiqueta de churn y los metadatos contractuales al output final
+
     Parameters
     ----------
     df_contracts : pd.DataFrame
-        DataFrame mensual con contract_id (output de run_preprocessing_pipeline).
-    n_months : int
-        Número de meses de onboarding para calcular features y definir churn.
-    exclude_right_censored : bool, default=False
-        Indica si los contratos right-censored deben excluirse antes de construir
-        el dataset final para este horizonte temporal.
+        DataFrame mensual con `contract_id`, output de `run_preprocessing_pipeline`.
+
+    n_months : int, default=3
+        Número de meses de onboarding utilizados para construir las features y
+        definir el horizonte de churn.
+
+    include_right_censored : bool, default=True
+        Indica si los contratos right-censored se mantienen en el dataset al
+        calcular la etiqueta de churn para este horizonte temporal.
 
     Returns
     -------
     pd.DataFrame
-        Dataset con una fila por contrato, features de comportamiento,
-        precio estable y target de churn.
+        Dataset a nivel contrato con:
+        - features de comportamiento de los primeros `n_months` meses
+        - features de precio estable post-onboarding
+        - variable objetivo `churned_{n_months}m`
+        - metadatos contractuales añadidos al final del pipeline
     """
     churn_col = f"churned_{n_months}m"
 

@@ -438,6 +438,7 @@ def add_contract_metadata(
     - `contrato_churn_date`
     - `contract_end_period`
     - `contract_duration_months`
+    - `is_right_censored`
 
     Además, si existe `advertiser_group_id`, se añade la columna derivada
     `has_group`.
@@ -474,6 +475,7 @@ def add_contract_metadata(
         "contrato_churn_date",
         "contract_end_period",
         "contract_duration_months",
+        "is_right_censored"
     ]
 
     metadata_cols = [col for col in candidate_cols if col in active.columns]

@@ -1,5 +1,11 @@
+import logging
+
 import numpy as np
 import pandas as pd
+
+from src.preprocessing.utils import validate_columns
+
+logger = logging.getLogger(__name__)
 
 
 BEHAVIOR_COLS = [
@@ -28,79 +34,128 @@ TREND_COLS = [
 ]
 
 
-# Asumimos que los contratos recibidos no estan left-censored,
-# es decir, han empezado dentro del intervalo de datos y no antes.
-# El filtrado de contratos previos se hace en preprocessing.
-def compute_contract_churn(df, threshold=3):
-    """Etiqueta contratos como churned si duran <= threshold meses."""
-    out = df.copy()
-    contract_duration = (
-        out.groupby("contract_id")
-        .size()
-        .reset_index(name="duration")
+def compute_contract_churn(df: pd.DataFrame, threshold: int = 3) -> pd.DataFrame:
+    """
+    Etiqueta contratos como churned si duran <= threshold meses y no están
+    right-censored.
+    """
+    active = df[df["contract_id"].notna()].copy()
+
+    contract_summary = (
+        active.groupby("contract_id", as_index=False)
+        .agg(
+            contract_duration=("period_int", "size"),
+            is_right_censored=("is_right_censored", "first"),
+        )
     )
-    short_contracts = contract_duration.loc[
-        contract_duration["duration"] <= threshold, "contract_id"
-    ]
-    out[f"churned_{threshold}m"] = out["contract_id"].isin(short_contracts)
+
+    contract_summary[f"churned_{threshold}m"] = (
+        (contract_summary["contract_duration"] <= threshold)
+        & (~contract_summary["is_right_censored"])
+    )
+
+    out = active.merge(
+        contract_summary[["contract_id", "contract_duration", f"churned_{threshold}m"]],
+        on="contract_id",
+        how="left",
+    )
+
     return out
 
 
-def get_first_n_months(df, n=3):
-    """Devuelve los primeros n meses de cada contrato (solo contratos con >=n meses)."""
-    active = df[df["contract_id"].notna()].copy()
+def get_first_n_months(df: pd.DataFrame, n: int = 3) -> pd.DataFrame:
+    """
+    Devuelve los primeros n meses de cada contrato, manteniendo unicamente
+    contratos con al menos n meses observados.
+    """
+    validate_columns(df, {"contract_id", "period_int"}, "get_first_n_months")
+
+    active = df.loc[df["contract_id"].notna()].copy()
     active = active.sort_values(["contract_id", "period_int"])
     active["month_number"] = active.groupby("contract_id").cumcount() + 1
 
     contract_lengths = (
-        active.groupby("contract_id")
+        active.groupby("contract_id", as_index=False)
         .size()
-        .reset_index(name="n_months")
+        .rename(columns={"size": "n_months"})
     )
-    valid = contract_lengths.loc[contract_lengths["n_months"] >= n, "contract_id"]
-    active = active[active["contract_id"].isin(valid)]
 
-    return active[active["month_number"] <= n]
+    total_contracts = contract_lengths["contract_id"].nunique()
+    valid_contracts = contract_lengths.loc[
+        contract_lengths["n_months"] >= n, "contract_id"
+    ]
+    n_valid = valid_contracts.nunique()
+    n_removed = total_contracts - n_valid
+    pct_removed = n_removed / total_contracts * 100 if total_contracts > 0 else 0.0
+
+    logger.info(
+        "Contracts retained with at least %s months: %s/%s | removed: %s (%.2f%%)",
+        n, n_valid, total_contracts, n_removed, pct_removed,
+    )
+
+    active = active.loc[active["contract_id"].isin(valid_contracts)].copy()
+    return active.loc[active["month_number"] <= n].copy()
 
 
 def _slope(x, y):
     """Pendiente lineal simple entre x e y."""
-    if len(x) < 2 or y.std() == 0:
+    tmp = pd.DataFrame({"x": x, "y": y}).dropna()
+
+    if len(tmp) < 2 or tmp["y"].std() == 0:
         return 0.0
-    return np.polyfit(x.values.astype(float), y.values.astype(float), 1)[0]
 
-
-def compute_behavior_features(df_first_months):
-    """Agrega metricas de los primeros meses: medias, std, valores por mes, ratios y tendencias."""
-
-    # Media por contrato
-    agg = df_first_months.groupby("contract_id")[BEHAVIOR_COLS].mean()
-
-    # Para invoice ignoramos meses con 0 en la media
-    tmp = df_first_months.copy()
-    tmp.loc[tmp["monthly_total_invoice"] == 0, "monthly_total_invoice"] = np.nan
-    agg["monthly_total_invoice"] = (
-        tmp.groupby("contract_id")["monthly_total_invoice"].mean().fillna(0)
+    return float(
+        np.polyfit(
+            tmp["x"].to_numpy(dtype=float),
+            tmp["y"].to_numpy(dtype=float),
+            1,
+        )[0]
     )
 
-    # Std por contrato
-    behavior_std = df_first_months.groupby("contract_id")[BEHAVIOR_COLS].std().fillna(0)
-    behavior_std.columns = [f"{c}_std" for c in BEHAVIOR_COLS]
+
+def compute_behavior_features(df_first_months: pd.DataFrame) -> pd.DataFrame:
+    """
+    Agrega métricas de comportamiento de los primeros meses a nivel contrato:
+    medias, desviaciones estándar, valores por mes, ratios y tendencias.
+
+    Criterio para monthly_total_invoice
+    -------------------------------------
+    Los valores iguales a 0 se tratan como no informativos y se convierten en
+    NaN antes de calcular las features derivadas de facturación.
+    """
+    required_cols = {"contract_id", "month_number"} | set(BEHAVIOR_COLS) | set(TREND_COLS)
+    validate_columns(df_first_months, required_cols, "compute_behavior_features")
+
+    n_contracts_input = df_first_months["contract_id"].nunique()
+
+    df_clean = df_first_months.copy()
+
+    n_zero_invoice = (df_clean["monthly_total_invoice"] == 0).sum()
+    df_clean.loc[df_clean["monthly_total_invoice"] == 0, "monthly_total_invoice"] = np.nan
+
+    # 1. Media por contrato
+    agg = df_clean.groupby("contract_id")[BEHAVIOR_COLS].mean()
+    agg["monthly_total_invoice"] = agg["monthly_total_invoice"].fillna(0)
+
+    # 2. Std por contrato
+    behavior_std = df_clean.groupby("contract_id")[BEHAVIOR_COLS].std().fillna(0)
+    behavior_std.columns = [f"{col}_std" for col in BEHAVIOR_COLS]
     agg = agg.join(behavior_std)
 
-    # Valor de cada mes individual (month1, month2, month3...)
-    pivoted = df_first_months.pivot_table(
+    # 3. Valor de cada mes individual
+    pivoted = df_clean.pivot_table(
         index="contract_id",
         columns="month_number",
         values=BEHAVIOR_COLS,
+        aggfunc="first",
     )
-    pivoted.columns = [f"{col}_month{int(m)}" for col, m in pivoted.columns]
+    pivoted.columns = [f"{col}_month{int(month)}" for col, month in pivoted.columns]
     agg = agg.join(pivoted)
 
-    # Ratios
+    # 4. Ratios
     agg["usage_ratio"] = (
         agg["monthly_published_ads"] / agg["monthly_contracted_ads"].replace(0, np.nan)
-    ).clip(upper=1.0)
+    )
 
     agg["cost_per_lead"] = (
         agg["monthly_total_invoice"] / agg["monthly_leads"].replace(0, np.nan)
@@ -111,27 +166,70 @@ def compute_behavior_features(df_first_months):
     )
 
     agg["premium_ratio"] = (
-        (agg["monthly_oro_ads"] + agg["monthly_plata_ads"] + agg["monthly_destacados_ads"])
+        (
+            agg["monthly_oro_ads"]
+            + agg["monthly_plata_ads"]
+            + agg["monthly_destacados_ads"]
+        )
         / agg["monthly_published_ads"].replace(0, np.nan)
     )
 
-    # Tendencias
+    # 5. Tendencias
     for col in TREND_COLS:
         agg[f"{col}_trend"] = (
-            df_first_months.groupby("contract_id")
-            .apply(lambda g: _slope(g["month_number"], g[col]), include_groups=False)
+            df_clean.groupby("contract_id")[["month_number", col]]
+            .apply(lambda g: _slope(g["month_number"], g[col]))
         )
+
+    logger.info(
+        "Behavior features built for %s contracts (input contracts: %s). "
+        "Converted %s zero invoices to NaN.",
+        agg.index.nunique(),
+        n_contracts_input,
+        int(n_zero_invoice),
+    )
+
+    logger.info(
+        "NaNs in ratios | usage_ratio: %s | cost_per_lead: %s | conversion_rate: %s | premium_ratio: %s",
+        int(agg["usage_ratio"].isna().sum()),
+        int(agg["cost_per_lead"].isna().sum()),
+        int(agg["conversion_rate"].isna().sum()),
+        int(agg["premium_ratio"].isna().sum()),
+    )
 
     return agg
 
 
-def compute_stable_price(df, n_months=3):
-    """Precio estable = media de facturacion a partir del mes n+1."""
-    active = df[df["contract_id"].notna()].copy()
+def compute_stable_price(df: pd.DataFrame, n_months: int = 3) -> pd.DataFrame:
+    """
+    Calcula el precio estable como la media de facturación a partir del mes n_months + 1
+    para cada contrato.
+
+    Criterio para monthly_total_invoice
+    -------------------------------------
+    Los valores iguales a 0 se tratan como no informativos y se convierten en
+    NaN antes de calcular las features derivadas de facturación post-onboarding.
+
+    Nota
+    ----
+    Esta función utiliza información posterior al onboarding, por lo que no debe
+    emplearse como feature del modelo 1 si el objetivo es predecir usando solo
+    los primeros n_months meses.
+    """
+    validate_columns(df, {"contract_id", "period_int", "monthly_total_invoice"}, "compute_stable_price")
+
+    active = df.loc[df["contract_id"].notna()].copy()
     active = active.sort_values(["contract_id", "period_int"])
     active["month_number"] = active.groupby("contract_id").cumcount() + 1
 
-    post = active[active["month_number"] > n_months].copy()
+    total_contracts = active["contract_id"].nunique()
+
+    post = active.loc[active["month_number"] > n_months].copy()
+    contracts_with_post_period = post["contract_id"].nunique()
+
+    n_zero_invoice = int((post["monthly_total_invoice"] == 0).sum())
+    post.loc[post["monthly_total_invoice"] == 0, "monthly_total_invoice"] = np.nan
+
     post["post_month"] = post.groupby("contract_id").cumcount() + 1
 
     out = post.groupby("contract_id").agg(
@@ -139,16 +237,26 @@ def compute_stable_price(df, n_months=3):
         stable_price_std=("monthly_total_invoice", "std"),
         n_months_post_onboarding=("monthly_total_invoice", "size"),
     )
+
+    out["stable_price"] = out["stable_price"].fillna(0)
     out["stable_price_std"] = out["stable_price_std"].fillna(0)
 
-    # Invoice de cada mes post-onboarding individual
     pivoted = post.pivot_table(
         index="contract_id",
         columns="post_month",
         values="monthly_total_invoice",
+        aggfunc="first",
     )
-    pivoted.columns = [f"invoice_post_month{int(m)}" for m in pivoted.columns]
+    pivoted.columns = [f"invoice_post_month{int(month)}" for month in pivoted.columns]
     out = out.join(pivoted)
+
+    logger.info(
+        "Stable price computed for %s/%s contracts with post-onboarding history. "
+        "Converted %s zero invoices to NaN.",
+        contracts_with_post_period,
+        total_contracts,
+        n_zero_invoice,
+    )
 
     return out
 

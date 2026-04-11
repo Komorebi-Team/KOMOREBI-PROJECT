@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.preprocessing.utils import validate_columns
+from src.utils import validate_columns
 
 def prepare_fct(
         df_fct: pd.DataFrame,

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import logging
 
-from src.preprocessing.utils import validate_columns
+from src.utils import validate_columns
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(

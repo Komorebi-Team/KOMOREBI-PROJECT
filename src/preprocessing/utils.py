@@ -2,10 +2,7 @@ import logging
 import pandas as pd
 import logging
 
-logger = logging.getLogger(__name__)
-
-
-def validate_columns(df: pd.DataFrame, required_cols: set, func_name: str):
+def validate_columns(df: pd.DataFrame, required_cols: set[str], func_name: str) -> None:
     missing_cols = required_cols - set(df.columns)
     if missing_cols:
         raise ValueError(

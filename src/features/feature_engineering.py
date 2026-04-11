@@ -330,24 +330,38 @@ def compute_behavior_features(df_first_months: pd.DataFrame) -> pd.DataFrame:
 
 def compute_stable_price(df: pd.DataFrame, n_months: int = 3) -> pd.DataFrame:
     """
-    Calcula el precio estable de cada contrato a partir de los meses posteriores
-    al onboarding.
+    Calcula métricas de precio estable de cada contrato a partir de los meses
+    posteriores al onboarding.
 
     Para cada contrato, la función:
     1. ordena los periodos y asigna `month_number`
-    2. descarta los primeros `n_months` meses
+    2. excluye los primeros `n_months` meses de onboarding
     3. calcula estadísticas de facturación post-onboarding
     4. añade los valores mensuales individuales de invoice tras onboarding
 
     Criterio para `monthly_total_invoice`
     -------------------------------------
-    Los valores iguales a `0` se tratan como no informativos y se convierten en
-    `NaN` antes de calcular las features derivadas de facturación post-onboarding.
+    Los valores iguales a `0` se consideran no informativos y se convierten en
+    `NaN` antes de calcular las métricas derivadas de facturación post-onboarding.
+
+    Métricas calculadas
+    -------------------
+    - `stable_price_mean`: media de `monthly_total_invoice` tras onboarding
+    - `stable_price_median`: mediana de `monthly_total_invoice` tras onboarding
+    - `stable_price_std`: desviación estándar de `monthly_total_invoice`
+    tras onboarding
+    - `n_months_post_onboarding`: número de meses observados tras onboarding
+
+    Además, se añaden los valores mensuales individuales de facturación
+    post-onboarding en columnas del tipo:
+    - `invoice_post_month1`
+    - `invoice_post_month2`
+    - ...
 
     Nota
     ----
     Esta función utiliza información posterior al onboarding, por lo que no debe
-    emplearse como feature del modelo 1 si el objetivo es predecir usando solo
+    emplearse como feature del modelo 1 si el objetivo es predecir utilizando solo
     los primeros `n_months` meses.
 
     Parameters
@@ -364,13 +378,13 @@ def compute_stable_price(df: pd.DataFrame, n_months: int = 3) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        DataFrame a nivel contrato con:
-        - `stable_price`
+        DataFrame a nivel contrato con las siguientes columnas:
+        - `stable_price_mean`
+        - `stable_price_median`
         - `stable_price_std`
         - `n_months_post_onboarding`
         - `invoice_post_month1`, `invoice_post_month2`, ...
     """
-
     validate_columns(df, {"contract_id", "period_int", "monthly_total_invoice"}, "compute_stable_price")
 
     active = df.loc[df["contract_id"].notna()].copy()
@@ -388,12 +402,14 @@ def compute_stable_price(df: pd.DataFrame, n_months: int = 3) -> pd.DataFrame:
     post["post_month"] = post.groupby("contract_id").cumcount() + 1
 
     out = post.groupby("contract_id").agg(
-        stable_price=("monthly_total_invoice", "mean"),
+        stable_price_mean=("monthly_total_invoice", "mean"),
+        stable_price_median=("monthly_total_invoice", "median"),
         stable_price_std=("monthly_total_invoice", "std"),
         n_months_post_onboarding=("monthly_total_invoice", "size"),
     )
 
-    out["stable_price"] = out["stable_price"].fillna(0)
+    out["stable_price_mean"] = out["stable_price_mean"].fillna(0)
+    out["stable_price_median"] = out["stable_price_median"].fillna(0)
     out["stable_price_std"] = out["stable_price_std"].fillna(0)
 
     pivoted = post.pivot_table(

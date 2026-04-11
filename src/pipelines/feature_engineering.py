@@ -1,12 +1,15 @@
 import pandas as pd
 
-from src.features.feature_engineering import (
+from src.features import (
     compute_contract_churn,
     get_first_n_months,
     compute_behavior_features,
     compute_stable_price,
     add_contract_metadata,
+
 )
+
+from src.features import prepare_model_features
 
 def run_feature_engineering_pipeline(
     df_contracts: pd.DataFrame,
@@ -72,5 +75,8 @@ def run_feature_engineering_pipeline(
 
     # 5. Metadata del contrato
     df_features = add_contract_metadata(df_features, df)
+
+    # 6. Imputación de valores nulos
+    df_features = prepare_model_features(df_features)
 
     return df_features

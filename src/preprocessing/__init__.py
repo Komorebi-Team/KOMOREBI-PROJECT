@@ -8,4 +8,3 @@ from .filter_contracts import (
     filter_contracts_with_valid_start,
     add_right_censoring_flag,
 )
-from .utils import validate_columns

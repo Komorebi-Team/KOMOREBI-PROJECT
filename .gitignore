@@ -1,5 +1,6 @@
 /data/
 EDA_jtc_files
+reports
 
 # Python cache
 __pycache__/

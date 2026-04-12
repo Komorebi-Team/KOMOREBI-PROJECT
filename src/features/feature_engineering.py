@@ -94,7 +94,7 @@ def compute_contract_churn(
     n_total_contracts = contract_summary["contract_id"].nunique()
     n_right_censored = int(contract_summary["is_right_censored"].sum())
     pct_right_censored = (
-        n_right_censored / ns_total_contracts * 100 if n_total_contracts > 0 else 0.0
+        n_right_censored / n_total_contracts * 100 if n_total_contracts > 0 else 0.0
     )
 
     if not include_right_censored:

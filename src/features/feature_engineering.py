@@ -94,13 +94,15 @@ def compute_contract_churn(
     n_total_contracts = contract_summary["contract_id"].nunique()
     n_right_censored = int(contract_summary["is_right_censored"].sum())
     pct_right_censored = (
-        n_right_censored / n_total_contracts * 100 if n_total_contracts > 0 else 0.0
+        n_right_censored / ns_total_contracts * 100 if n_total_contracts > 0 else 0.0
     )
 
     if not include_right_censored:
-        contract_summary = contract_summary.loc[
+        mask_keep = (
             ~contract_summary["is_right_censored"]
-        ].copy()
+            | (contract_summary["contract_duration_months"] > threshold)
+        )
+        contract_summary = contract_summary.loc[mask_keep].copy()
         merge_how = "inner"
     else:
         merge_how = "left"

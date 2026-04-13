@@ -98,11 +98,23 @@ def compute_contract_churn(
     )
 
     if not include_right_censored:
-        contract_summary = contract_summary.loc[
+        mask_keep = (
             ~contract_summary["is_right_censored"]
-        ].copy()
+            | (contract_summary["contract_duration_months"] > threshold)
+        )
+        logger.info(
+            "Filtrado inteligente: Descartando right-censored inconclusos (duración <= %s meses). "
+            "Se conservan con éxito los right-censored de larga duración (> %s meses) como casos probados de 'No Churn'.",
+            threshold, threshold
+        )
+        contract_summary = contract_summary.loc[mask_keep].copy()
         merge_how = "inner"
     else:
+        logger.warning(
+            "Atención: include_right_censored=True conserva todos los contratos right-censored. "
+            "Se asume prematuramente como 'No Churn' a aquellos con duración <= %s meses, lo cual puede introducir sesgo.",
+            threshold
+        )
         merge_how = "left"
 
     n_retained_contracts = contract_summary["contract_id"].nunique()

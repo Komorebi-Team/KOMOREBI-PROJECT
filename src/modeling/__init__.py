@@ -5,6 +5,7 @@ from .train import (
     train_random_forest,
     train_gradient_boosting,
     tune_gradient_boosting,
+    train_xgboost,
 )
 from .evaluate import (
     evaluate_model,

@@ -111,3 +111,22 @@ def tune_gradient_boosting(X_train, y_train, groups=None, n_iter=50):
     )
 
     return search
+
+from xgboost import XGBClassifier
+
+def train_xgboost(X_train, y_train):
+    """XGBoost con scale_pos_weight para compensar desbalanceo."""
+    scale = (y_train == 0).sum() / (y_train == 1).sum()
+
+    model = XGBClassifier(
+        n_estimators=200,
+        max_depth=5,
+        learning_rate=0.1,
+        scale_pos_weight=scale,
+        random_state=42,
+        use_label_encoder=False,
+        eval_metric="logloss",
+        n_jobs=-1
+    )
+    model.fit(X_train, y_train)
+    return model

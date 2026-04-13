@@ -1,5 +1,6 @@
 /data/
 EDA_jtc_files
+reports
 
 # Python cache
 __pycache__/
@@ -21,3 +22,5 @@ venv/
 
 # Logs
 *.log
+
+src/pipelines/end2end.py

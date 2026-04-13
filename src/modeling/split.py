@@ -6,20 +6,31 @@ from sklearn.model_selection import GroupShuffleSplit
 
 logger = logging.getLogger(__name__)
 
-LEAK_PATTERNS = ["stable_price", "invoice_post_month", "n_months_post_onboarding"]
-NON_FEATURE_COLS = ["churned_3m", "contract_duration", "advertiser_zrive_id"]
+NON_FEATURE_COLS = [
+    "churned_3m",
+    "advertiser_zrive_id",
+    "contract_start_date",
+    "contract_end_period",
+    "contrato_churn_date",
+    "contract_duration_months",
+    "advertiser_group_id",
+    "advertiser_province",
+    "is_right_censored",
+    "province_id"
+]
 
 
-def get_feature_cols(df: pd.DataFrame) -> list[str]:
-    """
-    Devuelve las columnas que se usan como features, excluyendo
-    target, leakage (datos post-onboarding) e identificadores.
-    """
-    exclude = set(NON_FEATURE_COLS)
-    for col in df.columns:
-        for pattern in LEAK_PATTERNS:
-            if pattern in col:
-                exclude.add(col)
+def get_feature_cols(df):
+    post_onboarding_cols = [
+        c for c in df.columns
+        if c.startswith("invoice_post_")
+        or c.startswith("stable_price")
+        or c == "n_months_post_onboarding"
+    ]
+
+    non_feature_cols = NON_FEATURE_COLS + post_onboarding_cols
+    exclude = set(non_feature_cols)
+
     return [c for c in df.columns if c not in exclude]
 
 

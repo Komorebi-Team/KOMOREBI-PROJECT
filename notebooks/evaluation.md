@@ -118,14 +118,16 @@ print(f"\npublished_ads_month3 == 0:")
 print(f"  Churn:    {(churned['monthly_published_ads_month3']==0).mean():.1%}")
 print(f"  No churn: {(not_churned['monthly_published_ads_month3']==0).mean():.1%}")
 
-print(f"\nEvolucion de actividad (media):")
-print(f"{'Metrica':<28} {'Month1':>8} {'Month2':>8} {'Month3':>8}")
-print("-" * 56)
+# Tabla con percentiles (no solo media)
+print(f"\nActividad en month3 por percentiles:")
+print(f"{'Metrica':<30} {'Grupo':<10} {'p25':>8} {'p50':>8} {'p75':>8} {'mean':>8}")
+print("-" * 72)
 for metric in ["monthly_published_ads", "monthly_total_invoice", "monthly_leads"]:
-    row_c = [churned[f"{metric}_month{m}"].mean() for m in [1,2,3]]
-    row_nc = [not_churned[f"{metric}_month{m}"].mean() for m in [1,2,3]]
-    print(f"{metric} (churn)    {row_c[0]:>8.1f} {row_c[1]:>8.1f} {row_c[2]:>8.1f}")
-    print(f"{metric} (no churn) {row_nc[0]:>8.1f} {row_nc[1]:>8.1f} {row_nc[2]:>8.1f}")
+    col = f"{metric}_month3"
+    for label, subset in [("Churn", churned), ("No churn", not_churned)]:
+        vals = subset[col]
+        print(f"{metric:<30} {label:<10} {vals.quantile(0.25):>8.1f} {vals.quantile(0.5):>8.1f} {vals.quantile(0.75):>8.1f} {vals.mean():>8.1f}")
+
 ```
 
     Duracion de los contratos churned:
@@ -138,15 +140,15 @@ for metric in ["monthly_published_ads", "monthly_total_invoice", "monthly_leads"
       Churn:    30.0%
       No churn: 7.1%
     
-    Evolucion de actividad (media):
-    Metrica                        Month1   Month2   Month3
-    --------------------------------------------------------
-    monthly_published_ads (churn)        14.8     18.2     17.4
-    monthly_published_ads (no churn)     68.5     74.8     73.9
-    monthly_total_invoice (churn)        43.7    170.5    166.4
-    monthly_total_invoice (no churn)    136.4    256.2    293.9
-    monthly_leads (churn)         4.2     14.1     14.0
-    monthly_leads (no churn)      6.1     14.1     14.6
+    Actividad en month3 por percentiles:
+    Metrica                        Grupo           p25      p50      p75     mean
+    ------------------------------------------------------------------------
+    monthly_published_ads          Churn           0.0      3.0      9.0     17.4
+    monthly_published_ads          No churn        3.0      9.0     26.0     73.9
+    monthly_total_invoice          Churn          63.3    112.1    173.3    166.4
+    monthly_total_invoice          No churn       78.3    140.0    263.4    293.9
+    monthly_leads                  Churn           0.0      3.0     11.0     14.0
+    monthly_leads                  No churn        1.0      6.0     15.0     14.6
 
 
 
@@ -168,8 +170,8 @@ gkf = GroupKFold(n_splits=5)
 scale = (y.iloc[train_idx] == 0).sum() / (y.iloc[train_idx] == 1).sum()
 sample_weights = np.where(y.iloc[train_idx] == 1, scale, 1.0)
 
-print(f"{'Config':<25} {'CV AUC':>8} {'CV Std':>8} {'Test AUC':>10} {'Test PR-AUC':>12}")
-print("=" * 65)
+print(f"{'Config':<25} {'Train AUC':>10} {'CV AUC':>8} {'CV Std':>8} {'Test AUC':>10} {'Test PR-AUC':>12}")
+print("=" * 75)
 
 for name, cols in [("Con month3", all_feature_cols), ("Sin month3", no_m3_feature_cols)]:
     X_tr = df[cols].fillna(0).iloc[train_idx]
@@ -179,24 +181,26 @@ for name, cols in [("Con month3", all_feature_cols), ("Sin month3", no_m3_featur
     gb = HistGradientBoostingClassifier(max_iter=200, max_depth=5, learning_rate=0.1, random_state=42)
     gb.fit(X_tr, y_tr, sample_weight=sample_weights)
 
+    train_auc = roc_auc_score(y_tr, gb.predict_proba(X_tr)[:, 1])
     scores = cross_val_score(gb, X_tr, y_tr, cv=gkf, groups=groups_train, scoring="roc_auc", n_jobs=-1)
     y_proba = gb.predict_proba(X_te)[:, 1]
 
-    print(f"{name:<25} {scores.mean():>8.3f} {scores.std():>8.3f} "
+    print(f"{name:<25} {train_auc:>10.3f} {scores.mean():>8.3f} {scores.std():>8.3f} "
           f"{roc_auc_score(y_te, y_proba):>10.3f} {average_precision_score(y_te, y_proba):>12.3f}")
 
 print(f"\nConclucion: excluimos features de month3 para evitar leakage temporal.")
 print(f"El modelo pierde algo de ROC AUC pero la PR-AUC se mantiene.")
+
 ```
 
-    Config                      CV AUC   CV Std   Test AUC  Test PR-AUC
-    =================================================================
+    Config                     Train AUC   CV AUC   CV Std   Test AUC  Test PR-AUC
+    ===========================================================================
 
 
-    Con month3                   0.775    0.037      0.652        0.207
+    Con month3                     1.000    0.775    0.037      0.652        0.207
 
 
-    Sin month3                   0.768    0.056      0.631        0.214
+    Sin month3                     1.000    0.768    0.056      0.631        0.214
     
     Conclucion: excluimos features de month3 para evitar leakage temporal.
     El modelo pierde algo de ROC AUC pero la PR-AUC se mantiene.

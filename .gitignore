@@ -24,3 +24,4 @@ venv/
 *.log
 
 src/pipelines/end2end.py
+models/

@@ -1,4 +1,5 @@
 import logging
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -10,17 +11,19 @@ from sklearn.pipeline import Pipeline
 from sklearn.model_selection import RandomizedSearchCV, GroupKFold
 from scipy.stats import uniform, randint
 
+from src.utils import compute_class_sample_weight
+
 logger = logging.getLogger(__name__)
 
 
-def train_baseline(X_train, y_train):
+def train_baseline(X_train: pd.DataFrame, y_train: pd.Series) -> DummyClassifier:
     """Baseline: predecir siempre la clase mayoritaria."""
     model = DummyClassifier(strategy="most_frequent")
     model.fit(X_train, y_train)
     return model
 
 
-def train_logistic_regression(X_train, y_train):
+def train_logistic_regression(X_train: pd.DataFrame, y_train: pd.Series) -> Pipeline:
     """Logistic regression con features escaladas y class_weight balanced."""
     model = Pipeline([
         ("scaler", StandardScaler()),
@@ -30,7 +33,7 @@ def train_logistic_regression(X_train, y_train):
     return model
 
 
-def train_random_forest(X_train, y_train):
+def train_random_forest(X_train: pd.DataFrame, y_train: pd.Series) -> RandomForestClassifier:
     """Random forest con class_weight balanced."""
     model = RandomForestClassifier(
         n_estimators=200,
@@ -42,10 +45,9 @@ def train_random_forest(X_train, y_train):
     return model
 
 
-def train_gradient_boosting(X_train, y_train):
+def train_gradient_boosting(X_train: pd.DataFrame, y_train: pd.Series) -> HistGradientBoostingClassifier:
     """Gradient boosting con sample_weight para compensar desbalanceo."""
-    scale = (y_train == 0).sum() / (y_train == 1).sum()
-    sample_weights = np.where(y_train == 1, scale, 1.0)
+    sample_weights = compute_class_sample_weight(y_train)
 
     model = HistGradientBoostingClassifier(
         max_iter=200,
@@ -57,15 +59,20 @@ def train_gradient_boosting(X_train, y_train):
     return model
 
 
-def tune_gradient_boosting(X_train, y_train, groups=None, n_iter=50):
+def tune_gradient_boosting(
+    X_train: pd.DataFrame, 
+    y_train: pd.Series, 
+    groups: Optional[pd.Series] = None, 
+    n_iter: int = 50
+) -> RandomizedSearchCV:
     """
     Tuning de hiperparametros de Gradient Boosting con RandomizedSearchCV.
 
     Parameters
     ----------
-    X_train, y_train : arrays
+    X_train, y_train : pd.DataFrame, pd.Series
         Datos de entrenamiento.
-    groups : array-like, optional
+    groups : pd.Series, optional
         Grupos para GroupKFold (advertiser_zrive_id).
     n_iter : int
         Numero de combinaciones a probar.
@@ -75,8 +82,7 @@ def tune_gradient_boosting(X_train, y_train, groups=None, n_iter=50):
     RandomizedSearchCV
         Modelo tuneado (acceder al mejor con .best_estimator_).
     """
-    scale = (y_train == 0).sum() / (y_train == 1).sum()
-    sample_weights = np.where(y_train == 1, scale, 1.0)
+    sample_weights = compute_class_sample_weight(y_train)
 
     param_dist = {
         "max_iter": randint(100, 500),
@@ -112,10 +118,14 @@ def tune_gradient_boosting(X_train, y_train, groups=None, n_iter=50):
 
     return search
 
-from xgboost import XGBClassifier
-
-def train_xgboost(X_train, y_train):
+def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series) -> Any:
     """XGBoost con scale_pos_weight para compensar desbalanceo."""
+    try:
+        from xgboost import XGBClassifier
+    except ImportError as e:
+        logger.error("XGBoost is not installed. Please install it using 'pip install xgboost'.")
+        raise ImportError("XGBoost is not installed.") from e
+
     scale = (y_train == 0).sum() / (y_train == 1).sum()
 
     model = XGBClassifier(

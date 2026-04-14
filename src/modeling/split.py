@@ -1,4 +1,5 @@
 import logging
+from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -6,8 +7,8 @@ from sklearn.model_selection import GroupShuffleSplit
 
 logger = logging.getLogger(__name__)
 
+# Columnas que nunca deben entrar al modelo (identificadores, fechas, labels de otros horizontes, etc.)
 NON_FEATURE_COLS = [
-    "churned_3m",
     "advertiser_zrive_id",
     "contract_start_date",
     "contract_end_period",
@@ -19,7 +20,10 @@ NON_FEATURE_COLS = [
 ]
 
 
-def get_feature_cols(df):
+def get_feature_cols(df: pd.DataFrame, target: str) -> List[str]:
+    """
+    Identifica dinámicamente las columnas de features, excluyendo el target y metadatos.
+    """
     post_onboarding_cols = [
         c for c in df.columns
         if c.startswith("invoice_post_")
@@ -27,8 +31,8 @@ def get_feature_cols(df):
         or c == "n_months_post_onboarding"
     ]
 
-    non_feature_cols = NON_FEATURE_COLS + post_onboarding_cols
-    exclude = set(non_feature_cols)
+    # Excluimos siempre el target actual y los metadatos hardcodeados
+    exclude = set(NON_FEATURE_COLS + [target] + post_onboarding_cols)
 
     return [c for c in df.columns if c not in exclude]
 
@@ -38,7 +42,7 @@ def split_by_advertiser(
     target: str = "churned_3m",
     test_size: float = 0.2,
     random_state: int = 42,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """
     Split train/test agrupado por advertiser.
 
@@ -60,7 +64,7 @@ def split_by_advertiser(
     -------
     X_train, X_test, y_train, y_test
     """
-    feature_cols = get_feature_cols(df)
+    feature_cols = get_feature_cols(df, target)
 
     y = df[target].astype(int)
     X = df[feature_cols].fillna(0)

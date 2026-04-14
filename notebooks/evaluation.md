@@ -206,6 +206,53 @@ print(f"El modelo pierde algo de ROC AUC pero la PR-AUC se mantiene.")
     El modelo pierde algo de ROC AUC pero la PR-AUC se mantiene.
 
 
+## 2b. Comparativa de ventanas temporales (n_months)
+
+El pipeline permite definir el horizonte de churn. Comparamos 3, 4 y 5 meses
+para ver como cambia el churn rate y el rendimiento del modelo.
+En cada caso excluimos las features del ultimo mes (mismo criterio de leakage).
+
+
+```python
+# Resultados pre-computados corriendo el pipeline con n_months=3,4,5
+# y excluyendo features del ultimo mes en cada caso (mismo criterio de leakage)
+# Modelo: HistGradientBoosting, 5-fold GroupKFold por advertiser
+
+results_nmonths = pd.DataFrame({
+    'n_months': [3, 4, 5],
+    'Contratos': [3733, 3367, 2944],
+    'Churn': [230, 338, 384],
+    'Churn_pct': [6.2, 10.0, 13.0],
+    'Features': [72, 88, 103],
+    'CV_AUC': [0.717, 0.704, 0.727],
+    'CV_Std': [0.031, 0.021, 0.016],
+    'CV_PR_AUC': [0.194, 0.217, 0.336],
+})
+
+print(f"{'n_months':>8} {'Contratos':>10} {'Churn':>6} {'Churn%':>8} {'Features':>9} {'CV AUC':>8} {'CV Std':>8} {'CV PR-AUC':>10}")
+print('=' * 80)
+for _, row in results_nmonths.iterrows():
+    print(f"{int(row['n_months']):>8} {int(row['Contratos']):>10} {int(row['Churn']):>6} "
+          f"{row['Churn_pct']:>7.1f}% {int(row['Features']):>9} "
+          f"{row['CV_AUC']:>8.3f} {row['CV_Std']:>8.3f} {row['CV_PR_AUC']:>10.3f}")
+
+print(f'\nA mayor ventana, mas positivos y mejor PR-AUC (0.19 -> 0.34).')
+print(f'ROC AUC es similar en los tres (~0.71-0.73).')
+print(f'Mantenemos n_months=3 como horizonte principal (prediccion mas temprana).')
+
+```
+
+    n_months  Contratos  Churn   Churn%  Features   CV AUC   CV Std  CV PR-AUC
+    ================================================================================
+           3       3733    230     6.2%        72    0.717    0.031      0.194
+           4       3367    338    10.0%        88    0.704    0.021      0.217
+           5       2944    384    13.0%       103    0.727    0.016      0.336
+    
+    A mayor ventana, mas positivos y mejor PR-AUC (0.19 -> 0.34).
+    ROC AUC es similar en los tres (~0.71-0.73).
+    Mantenemos n_months=3 como horizonte principal (prediccion mas temprana).
+
+
 ## 3. Split por advertiser
 
 Un mismo advertiser puede tener varios contratos. Si un contrato cae en train y otro
@@ -1493,7 +1540,7 @@ print("LR: train y validation convergen, indica menor varianza.")
 
 
     
-![png](evaluation_files/evaluation_18_0.png)
+![png](evaluation_files/evaluation_20_0.png)
     
 
 
@@ -1542,7 +1589,7 @@ plt.show()
 
 
     
-![png](evaluation_files/evaluation_20_0.png)
+![png](evaluation_files/evaluation_22_0.png)
     
 
 
@@ -1576,7 +1623,7 @@ print(classification_report(y_test, y_pred_tuned, target_names=["No churn", "Chu
 
 
     
-![png](evaluation_files/evaluation_21_1.png)
+![png](evaluation_files/evaluation_23_1.png)
     
 
 
@@ -1620,7 +1667,7 @@ plt.show()
 
 
     
-![png](evaluation_files/evaluation_23_0.png)
+![png](evaluation_files/evaluation_25_0.png)
     
 
 
@@ -1759,6 +1806,8 @@ for f in top15:
 
 
     depth=3, lr=0.05, leaf=30                0.951    0.754    0.031      0.706    0.244   +0.245
+
+
     Regularizado (depth=2, l2=1)             0.868    0.752    0.035      0.722    0.178   +0.146
     
     Features seleccionadas (top 15):
@@ -1827,7 +1876,7 @@ print(classification_report(y_test, y_pred_optimal, target_names=["No churn", "C
 
 
     
-![png](evaluation_files/evaluation_29_1.png)
+![png](evaluation_files/evaluation_31_1.png)
     
 
 
@@ -1944,7 +1993,7 @@ plt.show()
 
 
     
-![png](evaluation_files/evaluation_34_0.png)
+![png](evaluation_files/evaluation_36_0.png)
     
 
 
@@ -1995,7 +2044,7 @@ print(f"Invoice media churn: {X.loc[churned_mask, 'monthly_total_invoice'].mean(
 
 
     
-![png](evaluation_files/evaluation_36_0.png)
+![png](evaluation_files/evaluation_38_0.png)
     
 
 

@@ -191,8 +191,9 @@ for name, cols in [("Con month3", all_feature_cols), ("Sin month3", no_m3_featur
     print(f"{name:<25} {train_auc:>10.3f} {scores.mean():>8.3f} {scores.std():>8.3f} "
           f"{roc_auc_score(y_te, y_proba):>10.3f} {average_precision_score(y_te, y_proba):>12.3f}")
 
-print(f"\nConclucion: excluimos features de month3 para evitar leakage temporal.")
-print(f"El modelo pierde algo de ROC AUC pero la PR-AUC se mantiene.")
+print(f'Conclucion: excluimos features de month3 para evitar leakage temporal.')
+print(f'Sin month3, el modelo pierde rendimiento (especialmente PR-AUC).')
+print(f'Esto confirma que month3 contenia senal relevante, parte de ella leakage.')
 
 ```
 
@@ -200,13 +201,13 @@ print(f"El modelo pierde algo de ROC AUC pero la PR-AUC se mantiene.")
     ===========================================================================
 
 
-    Con month3                     1.000    0.775    0.037      0.652        0.207
+    Con month3                     1.000    0.758    0.041      0.657        0.229
 
 
-    Sin month3                     1.000    0.768    0.056      0.631        0.214
-    
+    Sin month3                     1.000    0.714    0.040      0.600        0.133
     Conclucion: excluimos features de month3 para evitar leakage temporal.
-    El modelo pierde algo de ROC AUC pero la PR-AUC se mantiene.
+    Sin month3, el modelo pierde rendimiento (especialmente PR-AUC).
+    Esto confirma que month3 contenia senal relevante, parte de ella leakage.
 
 
 ## 2b. Comparativa de ventanas temporales (n_months)
@@ -1380,9 +1381,9 @@ print(f"PR AUC baseline (random): {y_test.mean():.3f} (prevalencia de la clase p
     Modelo                     Train AUC   Test AUC     Diff  Test PR-AUC
     ====================================================================
     Baseline                       0.500      0.500   +0.000        0.068
-    Logistic Regression            0.795      0.652   +0.143        0.194 !!
-    Random Forest                  1.000      0.670   +0.330        0.185 !!
-    Gradient Boosting              1.000      0.631   +0.369        0.214 !!
+    Logistic Regression            0.749      0.599   +0.151        0.178 !!
+    Random Forest                  0.999      0.644   +0.355        0.141 !!
+    Gradient Boosting              1.000      0.600   +0.400        0.133 !!
     
     Diff > 0.10 indica posible overfitting.
     PR AUC baseline (random): 0.068 (prevalencia de la clase positiva)
@@ -1420,13 +1421,13 @@ for name, model in models.items():
     ==========================================================
 
 
-    Logistic Regression       0.701 +/- 0.046  0.142 +/- 0.024
+    Logistic Regression       0.677 +/- 0.054  0.126 +/- 0.022
 
 
-    Random Forest             0.752 +/- 0.053  0.190 +/- 0.072
+    Random Forest             0.743 +/- 0.047  0.219 +/- 0.068
 
 
-    Gradient Boosting         0.768 +/- 0.056  0.216 +/- 0.037
+    Gradient Boosting         0.714 +/- 0.040  0.187 +/- 0.054
 
 
 ## 6. Tuning de Gradient Boosting
@@ -1472,13 +1473,13 @@ print(f"  Test ROC AUC:  {test_auc_tuned:.3f} (diff: {train_auc_tuned - test_auc
 print(f"  Test PR AUC:   {test_pr_auc_tuned:.3f}")
 ```
 
-    Mejor ROC AUC (CV): 0.773
-    Params: {'l2_regularization': np.float64(0.8036720768991145), 'learning_rate': np.float64(0.04731401177720717), 'max_depth': 5, 'max_iter': 227, 'max_leaf_nodes': 47, 'min_samples_leaf': 34}
+    Mejor ROC AUC (CV): 0.738
+    Params: {'l2_regularization': np.float64(0.44583275285359114), 'learning_rate': np.float64(0.02999498316360058), 'max_depth': 5, 'max_iter': 187, 'max_leaf_nodes': 55, 'min_samples_leaf': 49}
     
     GB Tuned:
-      Train ROC AUC: 0.999
-      Test ROC AUC:  0.648 (diff: +0.351)
-      Test PR AUC:   0.214
+      Train ROC AUC: 0.981
+      Test ROC AUC:  0.613 (diff: +0.368)
+      Test PR AUC:   0.118
 
 
 ## 7b. Learning curves (logloss vs complejidad)
@@ -1627,12 +1628,12 @@ print(classification_report(y_test, y_pred_tuned, target_names=["No churn", "Chu
     Classification Report (GB Tuned, threshold=0.5):
                   precision    recall  f1-score   support
     
-        No churn       0.95      0.94      0.94       699
-           Churn       0.26      0.29      0.28        51
+        No churn       0.94      0.85      0.89       699
+           Churn       0.12      0.29      0.17        51
     
-        accuracy                           0.89       750
-       macro avg       0.60      0.62      0.61       750
-    weighted avg       0.90      0.89      0.90       750
+        accuracy                           0.81       750
+       macro avg       0.53      0.57      0.53       750
+    weighted avg       0.89      0.81      0.84       750
     
 
 
@@ -1705,9 +1706,9 @@ print(f"capturaba la senal de abandono (leakage).")
 ```
 
     Importancia por grupo:
-      Facturacion/Precio: 0.0520 (12 features)
-      Engagement:         0.0079 (27 features)
-      Ratios:             0.0256 (4 features)
+      Facturacion/Precio: 0.0238 (12 features)
+      Engagement:         0.0103 (27 features)
+      Ratios:             0.0222 (4 features)
     
     Sin features de month3, la facturacion tiene mas peso que el engagement.
     Con month3, el engagement pesaba mas porque la actividad del ultimo mes
@@ -1755,22 +1756,22 @@ for n_feat in [5, 10, 15, 20, 30, len(feature_cols)]:
     ==========================================================================================
 
 
-    Top 5 features                           5      0.990    0.744    0.042      0.652    0.142   +0.339
+    Top 5 features                           5      0.983    0.688    0.032      0.609    0.113   +0.375
 
 
-    Top 10 features                         10      0.998    0.733    0.012      0.673    0.172   +0.325
+    Top 10 features                         10      0.998    0.711    0.037      0.641    0.147   +0.357
 
 
-    Top 15 features                         15      0.999    0.726    0.027      0.674    0.196   +0.324
+    Top 15 features                         15      0.999    0.714    0.044      0.649    0.169   +0.350
 
 
-    Top 20 features                         20      1.000    0.729    0.025      0.679    0.178   +0.320
+    Top 20 features                         20      0.999    0.713    0.024      0.624    0.139   +0.376
 
 
-    Top 30 features                         30      1.000    0.767    0.035      0.690    0.160   +0.310
+    Top 30 features                         30      0.999    0.717    0.040      0.637    0.140   +0.363
 
 
-    All 72 features                         72      1.000    0.769    0.057      0.616    0.227   +0.384
+    All 72 features                         72      1.000    0.717    0.044      0.600    0.133   +0.400
 
 
 
@@ -1814,33 +1815,33 @@ for f in top15:
     ==========================================================================================
 
 
-    Default (depth=5, lr=0.1)                0.999    0.726    0.027      0.674    0.196   +0.324
+    Default (depth=5, lr=0.1)                0.999    0.714    0.044      0.649    0.169   +0.350
 
 
-    Menos profundo (depth=3)                 0.982    0.730    0.026      0.689    0.216   +0.293
+    Menos profundo (depth=3)                 0.977    0.718    0.045      0.634    0.161   +0.343
 
 
-    depth=3, lr=0.05, leaf=30                0.951    0.754    0.031      0.706    0.244   +0.245
+    depth=3, lr=0.05, leaf=30                0.943    0.732    0.045      0.645    0.165   +0.299
 
 
-    Regularizado (depth=2, l2=1)             0.868    0.752    0.035      0.722    0.178   +0.146
+    Regularizado (depth=2, l2=1)             0.852    0.731    0.049      0.641    0.122   +0.212
     
     Features seleccionadas (top 15):
-      - monthly_total_invoice_month2
-      - usage_ratio
       - monthly_total_invoice
-      - monthly_published_ads
-      - monthly_contracted_ads
-      - has_group
-      - monthly_total_emails_std
-      - monthly_published_ads_std
-      - monthly_distinct_ads
-      - monthly_total_invoice_month1
+      - monthly_published_ads_month2
+      - monthly_published_ads_month1
+      - monthly_distinct_ads_month1
+      - usage_ratio
+      - monthly_total_invoice_month2
+      - monthly_total_phone_views_month1
       - cost_per_lead
-      - monthly_contracted_ads_month1
+      - monthly_contracted_ads
+      - monthly_unique_leads_month1
+      - conversion_rate
+      - monthly_oro_ads_month1
       - monthly_contracted_ads_month2
-      - monthly_contracted_ads_std
-      - monthly_distinct_ads_std
+      - monthly_plata_ads
+      - monthly_total_invoice_trend
 
 
 ## 9. Threshold optimo
@@ -1883,10 +1884,10 @@ print(classification_report(y_test, y_pred_optimal, target_names=["No churn", "C
 ```
 
     Threshold por defecto: 0.5
-    Threshold optimo (max F1): 0.541
-      Precision: 0.312
-      Recall:    0.294
-      F1:        0.303
+    Threshold optimo (max F1): 0.690
+      Precision: 0.208
+      Recall:    0.196
+      F1:        0.202
 
 
 
@@ -1899,12 +1900,12 @@ print(classification_report(y_test, y_pred_optimal, target_names=["No churn", "C
     Classification report con threshold optimo:
                   precision    recall  f1-score   support
     
-        No churn       0.95      0.95      0.95       699
-           Churn       0.31      0.29      0.30        51
+        No churn       0.94      0.95      0.94       699
+           Churn       0.21      0.20      0.20        51
     
-        accuracy                           0.91       750
-       macro avg       0.63      0.62      0.63       750
-    weighted avg       0.91      0.91      0.91       750
+        accuracy                           0.89       750
+       macro avg       0.57      0.57      0.57       750
+    weighted avg       0.89      0.89      0.89       750
     
 
 
@@ -1936,9 +1937,9 @@ for seg in ["Baja", "Media", "Alta"]:
 
     Segmento          N   Churn rate    ROC AUC     PR AUC
     ====================================================
-    Baja            250        10.0%      0.651      0.332
-    Media           254         5.5%      0.696      0.260
-    Alta            246         4.9%      0.584      0.078
+    Baja            250         8.4%      0.547      0.124
+    Media           250         6.8%      0.694      0.144
+    Alta            250         5.2%      0.661      0.176
 
 
 ## 11. Perfiles de riesgo
@@ -1969,9 +1970,9 @@ for riesgo in ["Bajo", "Medio", "Alto"]:
 
     Riesgo         N      %   Churn real    Invoice    Leads    Usage
     ==============================================================
-    Bajo        2445    65%         0.9%        346     14.1     0.73
-    Medio        744    20%         1.5%        132      7.2     0.63
-    Alto         544    15%        36.2%        122      6.5     0.45
+    Bajo        1139    31%         1.1%        420     18.5     0.71
+    Medio       1347    36%         1.0%         97      6.7     0.68
+    Alto        1247    33%        16.4%         82      5.9     0.57
 
 
 
@@ -2063,9 +2064,9 @@ print(f"Invoice media churn: {X.loc[churned_mask, 'monthly_total_invoice'].mean(
     
 
 
-    Correlacion invoice-churn: -0.043
-    Invoice media no churn: 277
-    Invoice media churn: 170
+    Correlacion invoice-churn: -0.039
+    Invoice media no churn: 196
+    Invoice media churn: 107
 
 
 ## 13. Performance temporal (walk-forward)
@@ -2119,13 +2120,13 @@ print(f'No hay degradacion temporal.')
     =================================================================
 
 
-    2024-H1             1635      966         3.9%      0.632      0.071
+    2024-H1             1635      966         3.9%      0.663      0.097
 
 
-    2024-H2             2601      855         5.4%      0.705      0.113
+    2024-H2             2601      855         5.4%      0.663      0.102
 
 
-    2025-H1             3456      277         3.2%      0.748      0.155
+    2025-H1             3456      277         3.2%      0.688      0.093
     
     El modelo mejora con mas datos de entrenamiento (ROC AUC sube de 0.63 a 0.75).
     No hay degradacion temporal.
@@ -2165,17 +2166,17 @@ print(f"captura ~30% de los churns reales y la facturacion asociada.")
 ```
 
     Test set: 750 contratos, 51 churns
-    Invoice media churn: 225, no churn: 337
+    Invoice media churn: 128, no churn: 241
     
      Top %  Intervenidos  Churns reales  Precision   Recall  Facturacion salvada
     -------------------------------------------------------------------------
-        5%            37              9      24.3%    17.6%                  626
-       10%            75             16      21.3%    31.4%                 1497
-       15%           112             18      16.1%    35.3%                 1683
-       20%           150             21      14.0%    41.2%                 1939
-       30%           225             25      11.1%    49.0%                 2373
+        5%            37              7      18.9%    13.7%                  605
+       10%            75             11      14.7%    21.6%                  817
+       15%           112             15      13.4%    29.4%                 1064
+       20%           150             17      11.3%    33.3%                 1375
+       30%           225             23      10.2%    45.1%                 1680
     
-    Facturacion total en riesgo: 11451
+    Facturacion total en riesgo: 6549
     
     Interpretacion: si el equipo comercial contacta al top 10% de riesgo,
     captura ~30% de los churns reales y la facturacion asociada.
@@ -2252,9 +2253,9 @@ print(f'Para cuantificar el impacto real del precio en churn se necesitarian dat
     
     Segmento      -20%    -10%     +0%    +10%    +20%    +30%
     ----------------------------------------------------------
-    Bajo         0.036   0.032   0.028   0.027   0.028   0.030
-    Medio        0.194   0.195   0.174   0.166   0.159   0.161
-    Alto         0.500   0.525   0.537   0.514   0.492   0.479
+    Bajo         0.045   0.043   0.041   0.041   0.042   0.043
+    Medio        0.200   0.196   0.184   0.184   0.187   0.193
+    Alto         0.499   0.515   0.517   0.504   0.498   0.500
     
     Resultado contraintuitivo: subir precio REDUCE la probabilidad de churn predicha.
     Esto ocurre porque el modelo aprendio que mas facturacion = menos churn.
@@ -2267,28 +2268,33 @@ print(f'Para cuantificar el impacto real del precio en churn se necesitarian dat
 
 ## Conclusiones
 
-**Modelo 1 — Churn a 3 meses (sin month3, sin right-censored invalidos)**
+**Modelo 1 — Churn a 3 meses (features de solo los 2 primeros meses)**
 
-1. **Datos**: 3733 contratos, churn rate 6.2%. Probado con 3, 4 y 5 meses.
+1. **Datos**: 3733 contratos, churn rate 6.2%. Agregados recomputados con solo
+   month1 y month2 para evitar leakage de month3 en las features agregadas.
 
-2. **Leakage**: features de month3 excluidas (el mes 3 es el ultimo mes de los churned).
+2. **Leakage**: month3 es el ultimo mes para todos los churned. Al quitar
+   month3 (incluidos agregados), el rendimiento baja (PR-AUC 0.23 -> 0.13),
+   confirmando que el modelo dependia parcialmente de la senal de abandono.
 
-3. **Rendimiento**: GB Tuned CV ROC AUC ~0.75, PR AUC ~0.21.
-   Con variable selection (top 15) + regularizacion, el gap train-test
-   se reduce de +0.38 a +0.15.
+3. **Rendimiento (sin month3)**: GB CV ROC AUC ~0.71-0.73, PR AUC ~0.13.
+   Overfitting considerable (train ~1.0). Con variable selection (top 15)
+   + regularizacion, el gap se reduce a +0.21.
 
 4. **Overfitting**: las learning curves (logloss vs complejidad) muestran que GB
    empieza a overfittear a partir de ~50 arboles. Limitar complejidad es clave.
 
-5. **Estabilidad temporal**: walk-forward validation, el modelo no se degrada.
+5. **Estabilidad temporal**: walk-forward validation, el modelo mejora con mas datos.
 
-6. **Drivers de churn**: engagement y volumen de anuncios. El precio no es driver principal.
+6. **Drivers de churn**: facturacion y uso de plataforma (sin month3).
 
 7. **Sensibilidad al precio**: el modelo no sirve para esto. La relacion
-   precio-churn esta confundida por el engagement (los que pagan mas usan mas).
-   Se necesitarian datos experimentales para cuantificar el efecto causal.
+   precio-churn esta confundida por engagement. Se necesitarian datos
+   experimentales.
 
-8. **Impacto de negocio**: contactando al top 10% de riesgo se captura ~31% de churns.
+8. **Impacto de negocio**: contactando al top 10% de riesgo se captura
+   una parte significativa de los churns.
 
-9. **Perfiles de riesgo**: alto (~15%) con 36% churn real, bajo engagement y facturacion.
+9. **Limitacion principal**: con solo 230 churns y features de 2 meses,
+   el modelo tiene capacidad predictiva limitada pero informativa.
 

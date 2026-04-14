@@ -27,6 +27,15 @@ def _impute_zero_features(
         - "custom": usa solo `custom_cols`
         - "default_plus_custom": combina columnas por defecto y `custom_cols`
 
+        Las columnas por defecto son:
+        - Todas las que sean `monthly_total_invoice*`
+        - Todas las que sean `monthly_distinct_ads_month*`
+        - `monthly_distinct_ads`
+        - `usage_ratio`
+        - `cost_per_lead`
+        - `conversion_rate`
+        - `premium_ratio`
+
     Returns
     -------
     pd.DataFrame

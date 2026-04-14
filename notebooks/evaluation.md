@@ -8,11 +8,12 @@ Evaluacion rigurosa del modelo 1: prediccion de churn a 3 meses.
 3. Split y justificacion
 4. Comparativa de modelos (train vs test)
 5. Cross-validation con intervalos de confianza
-6. Metricas: ROC AUC + PR AUC
-7. Feature importance (permutation)
-8. Threshold optimo
-9. Perfiles de riesgo
-10. Analisis de precio vs churn
+6. Tuning + Learning curves
+7. Metricas: ROC AUC + PR AUC
+8. Feature importance (permutation)
+9. Threshold optimo
+10. Perfiles de riesgo
+11. Analisis de precio vs churn
 
 
 ```python
@@ -1326,8 +1327,6 @@ print(f"PR AUC baseline (random): {y_test.mean():.3f} (prevalencia de la clase p
     ====================================================================
     Baseline                       0.500      0.500   +0.000        0.074
     Logistic Regression            0.760      0.681   +0.078        0.177
-
-
     Random Forest                  1.000      0.740   +0.260        0.219 !!
     Gradient Boosting              1.000      0.696   +0.304        0.262 !!
     
@@ -1428,6 +1427,77 @@ print(f"  Test PR AUC:   {test_pr_auc_tuned:.3f}")
       Test PR AUC:   0.225
 
 
+## 6b. Learning curves
+
+Learning curves muestran como evoluciona el rendimiento en train y validation
+a medida que aumenta el tamaño de entrenamiento. Si las curvas convergen,
+el modelo generaliza bien. Si train se mantiene muy alto y validation muy bajo,
+hay overfitting que no se resuelve con mas datos.
+
+
+```python
+from sklearn.model_selection import learning_curve
+
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+models_lc = {
+    "Logistic Regression": Pipeline([
+        ("scaler", StandardScaler()),
+        ("lr", LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42))
+    ]),
+    "Random Forest": RandomForestClassifier(
+        n_estimators=200, class_weight="balanced", random_state=42, n_jobs=-1
+    ),
+    "Gradient Boosting": HistGradientBoostingClassifier(
+        max_iter=200, max_depth=5, learning_rate=0.1, random_state=42
+    ),
+}
+
+train_sizes = np.linspace(0.1, 1.0, 10)
+
+for ax, (name, model) in zip(axes, models_lc.items()):
+    sizes, train_scores, val_scores = learning_curve(
+        model, X_train, y_train,
+        train_sizes=train_sizes,
+        cv=gkf, groups=groups_train,
+        scoring="roc_auc", n_jobs=-1,
+    )
+
+    train_mean = train_scores.mean(axis=1)
+    train_std = train_scores.std(axis=1)
+    val_mean = val_scores.mean(axis=1)
+    val_std = val_scores.std(axis=1)
+
+    ax.fill_between(sizes, train_mean - train_std, train_mean + train_std, alpha=0.1, color="blue")
+    ax.fill_between(sizes, val_mean - val_std, val_mean + val_std, alpha=0.1, color="orange")
+    ax.plot(sizes, train_mean, "o-", color="blue", label="Train")
+    ax.plot(sizes, val_mean, "o-", color="orange", label="Validation")
+    ax.set_xlabel("Tamaño de entrenamiento")
+    ax.set_ylabel("ROC AUC")
+    ax.set_title(name)
+    ax.legend(loc="lower right")
+    ax.set_ylim(0.5, 1.05)
+
+plt.suptitle("Learning Curves (5-fold GroupKFold)", y=1.02)
+plt.tight_layout()
+plt.show()
+
+print("RF y GB: train se mantiene en ~1.0 con gap grande vs validation.")
+print("Mas datos no reducen el overfitting → necesitan mas regularizacion.")
+print("LR: train y validation convergen, indica menor varianza.")
+```
+
+
+    
+![png](evaluation_files/evaluation_18_0.png)
+    
+
+
+    RF y GB: train se mantiene en ~1.0 con gap grande vs validation.
+    Mas datos no reducen el overfitting → necesitan mas regularizacion.
+    LR: train y validation convergen, indica menor varianza.
+
+
 ## 7. Curvas ROC y Precision-Recall
 
 
@@ -1468,7 +1538,7 @@ plt.show()
 
 
     
-![png](evaluation_files/evaluation_18_0.png)
+![png](evaluation_files/evaluation_20_0.png)
     
 
 
@@ -1502,7 +1572,7 @@ print(classification_report(y_test, y_pred_tuned, target_names=["No churn", "Chu
 
 
     
-![png](evaluation_files/evaluation_19_1.png)
+![png](evaluation_files/evaluation_21_1.png)
     
 
 
@@ -1546,7 +1616,7 @@ plt.show()
 
 
     
-![png](evaluation_files/evaluation_21_0.png)
+![png](evaluation_files/evaluation_23_0.png)
     
 
 
@@ -1626,7 +1696,7 @@ print(classification_report(y_test, y_pred_optimal, target_names=["No churn", "C
 
 
     
-![png](evaluation_files/evaluation_24_1.png)
+![png](evaluation_files/evaluation_26_1.png)
     
 
 
@@ -1743,7 +1813,7 @@ plt.show()
 
 
     
-![png](evaluation_files/evaluation_29_0.png)
+![png](evaluation_files/evaluation_31_0.png)
     
 
 
@@ -1794,7 +1864,7 @@ print(f"Invoice media churn: {X.loc[churned_mask, 'monthly_total_invoice'].mean(
 
 
     
-![png](evaluation_files/evaluation_31_0.png)
+![png](evaluation_files/evaluation_33_0.png)
     
 
 

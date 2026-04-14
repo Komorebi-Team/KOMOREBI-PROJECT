@@ -1481,64 +1481,77 @@ print(f"  Test PR AUC:   {test_pr_auc_tuned:.3f}")
       Test PR AUC:   0.214
 
 
-## 6b. Learning curves
+## 7b. Learning curves (logloss vs complejidad)
 
-Learning curves muestran como evoluciona el rendimiento en train y validation
-a medida que aumenta el tamaño de entrenamiento. Si las curvas convergen,
-el modelo generaliza bien. Si train se mantiene muy alto y validation muy bajo,
-hay overfitting que no se resuelve con mas datos.
+Para diagnosticar el overfitting, miramos logloss (lo que optimiza el modelo)
+en funcion de la complejidad: numero de arboles para GB, profundidad para RF.
+Si con poca complejidad ya hay gap train-val, puede haber un problema en los datos.
 
 
 ```python
-from sklearn.model_selection import learning_curve
+from sklearn.metrics import log_loss
 
-fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-models_lc = {
-    "Logistic Regression": Pipeline([
-        ("scaler", StandardScaler()),
-        ("lr", LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42))
-    ]),
-    "Random Forest": RandomForestClassifier(
-        n_estimators=200, class_weight="balanced", random_state=42, n_jobs=-1
-    ),
-    "Gradient Boosting": HistGradientBoostingClassifier(
-        max_iter=200, max_depth=5, learning_rate=0.1, random_state=42
-    ),
-}
+# GB: logloss vs numero de arboles
+n_trees_range = [5, 10, 20, 50, 100, 150, 200, 300]
+train_ll, val_ll = [], []
 
-train_sizes = np.linspace(0.1, 1.0, 10)
-
-for ax, (name, model) in zip(axes, models_lc.items()):
-    sizes, train_scores, val_scores = learning_curve(
-        model, X_train, y_train,
-        train_sizes=train_sizes,
-        cv=gkf, groups=groups_train,
-        scoring="roc_auc", n_jobs=-1,
+for n_trees in n_trees_range:
+    gb_lc = HistGradientBoostingClassifier(
+        max_iter=n_trees, max_depth=5, learning_rate=0.1, random_state=42
     )
 
-    train_mean = train_scores.mean(axis=1)
-    train_std = train_scores.std(axis=1)
-    val_mean = val_scores.mean(axis=1)
-    val_std = val_scores.std(axis=1)
+    fold_train, fold_val = [], []
+    for tr, va in gkf.split(X_train, y_train, groups_train):
+        sc = (y_train.iloc[tr]==0).sum() / max((y_train.iloc[tr]==1).sum(), 1)
+        sw_f = np.where(y_train.iloc[tr]==1, sc, 1.0)
+        gb_lc.fit(X_train.iloc[tr], y_train.iloc[tr], sample_weight=sw_f)
+        fold_train.append(log_loss(y_train.iloc[tr], gb_lc.predict_proba(X_train.iloc[tr])[:, 1]))
+        fold_val.append(log_loss(y_train.iloc[va], gb_lc.predict_proba(X_train.iloc[va])[:, 1]))
+    train_ll.append(np.mean(fold_train))
+    val_ll.append(np.mean(fold_val))
 
-    ax.fill_between(sizes, train_mean - train_std, train_mean + train_std, alpha=0.1, color="blue")
-    ax.fill_between(sizes, val_mean - val_std, val_mean + val_std, alpha=0.1, color="orange")
-    ax.plot(sizes, train_mean, "o-", color="blue", label="Train")
-    ax.plot(sizes, val_mean, "o-", color="orange", label="Validation")
-    ax.set_xlabel("Tamaño de entrenamiento")
-    ax.set_ylabel("ROC AUC")
-    ax.set_title(name)
-    ax.legend(loc="lower right")
-    ax.set_ylim(0.5, 1.05)
+axes[0].plot(n_trees_range, train_ll, 'o-', label='Train')
+axes[0].plot(n_trees_range, val_ll, 'o-', label='Validation')
+axes[0].set_xlabel('Numero de arboles')
+axes[0].set_ylabel('Log Loss')
+axes[0].set_title('Gradient Boosting: logloss vs n_trees')
+axes[0].legend()
 
-plt.suptitle("Learning Curves (5-fold GroupKFold)", y=1.02)
+# RF: logloss vs depth
+depth_range = [1, 2, 3, 5, 7, 10, 15, None]
+train_ll_rf, val_ll_rf = [], []
+
+for depth in depth_range:
+    rf_lc = RandomForestClassifier(
+        n_estimators=200, max_depth=depth, class_weight='balanced', random_state=42, n_jobs=-1
+    )
+
+    fold_train, fold_val = [], []
+    for tr, va in gkf.split(X_train, y_train, groups_train):
+        rf_lc.fit(X_train.iloc[tr], y_train.iloc[tr])
+        fold_train.append(log_loss(y_train.iloc[tr], rf_lc.predict_proba(X_train.iloc[tr])[:, 1]))
+        fold_val.append(log_loss(y_train.iloc[va], rf_lc.predict_proba(X_train.iloc[va])[:, 1]))
+    train_ll_rf.append(np.mean(fold_train))
+    val_ll_rf.append(np.mean(fold_val))
+
+depth_labels = [str(d) if d else 'None' for d in depth_range]
+axes[1].plot(range(len(depth_range)), train_ll_rf, 'o-', label='Train')
+axes[1].plot(range(len(depth_range)), val_ll_rf, 'o-', label='Validation')
+axes[1].set_xticks(range(len(depth_range)))
+axes[1].set_xticklabels(depth_labels)
+axes[1].set_xlabel('Max depth')
+axes[1].set_ylabel('Log Loss')
+axes[1].set_title('Random Forest: logloss vs max_depth')
+axes[1].legend()
+
 plt.tight_layout()
 plt.show()
 
-print("RF y GB: train se mantiene en ~1.0 con gap grande vs validation.")
-print("Mas datos no reducen el overfitting → necesitan mas regularizacion.")
-print("LR: train y validation convergen, indica menor varianza.")
+print(f'GB: el logloss de validation empieza a subir a partir de ~50 arboles.')
+print(f'RF: el logloss de validation es relativamente estable con la profundidad.')
+
 ```
 
 
@@ -1547,9 +1560,8 @@ print("LR: train y validation convergen, indica menor varianza.")
     
 
 
-    RF y GB: train se mantiene en ~1.0 con gap grande vs validation.
-    Mas datos no reducen el overfitting → necesitan mas regularizacion.
-    LR: train y validation convergen, indica menor varianza.
+    GB: el logloss de validation empieza a subir a partir de ~50 arboles.
+    RF: el logloss de validation es relativamente estable con la profundidad.
 
 
 ## 7. Curvas ROC y Precision-Recall
@@ -1809,6 +1821,8 @@ for f in top15:
 
 
     depth=3, lr=0.05, leaf=30                0.951    0.754    0.031      0.706    0.244   +0.245
+
+
     Regularizado (depth=2, l2=1)             0.868    0.752    0.035      0.722    0.178   +0.146
     
     Features seleccionadas (top 15):
@@ -2167,25 +2181,114 @@ print(f"captura ~30% de los churns reales y la facturacion asociada.")
     captura ~30% de los churns reales y la facturacion asociada.
 
 
+## 15. Analisis de sensibilidad al precio
+
+Intentamos responder: si subimos el precio un X%, cuanto sube la probabilidad
+de churn para cada segmento de riesgo?
+
+Para ello variamos las features de precio (invoice, avg_ad_price, cost_per_lead)
+proporcionalmente y re-predecimos con el modelo de churn.
+
+
+```python
+# Features de precio que escalamos proporcionalmente
+price_features = [
+    c for c in feature_cols
+    if any(k in c for k in ['invoice', 'avg_ad_price', 'cost_per_lead'])
+    and 'missing' not in c
+]
+print(f'Features de precio a variar: {len(price_features)}')
+for f in price_features:
+    print(f'  {f}')
+
+# Segmentos de riesgo con el modelo actual
+base_proba = gb_search.predict_proba(X_test)[:, 1]
+risk = pd.cut(base_proba, bins=[0, 0.1, 0.3, 1.0], labels=['Bajo', 'Medio', 'Alto'])
+
+# Sensibilidad
+price_changes = [-0.20, -0.10, 0, 0.10, 0.20, 0.30]
+
+print(f'\nProbabilidad media de churn por segmento y cambio de precio:\n')
+print(f"{'Segmento':<10}", end='')
+for pc in price_changes:
+    print(f'  {pc:+.0%}'.rjust(8), end='')
+print()
+print('-' * 58)
+
+for r in ['Bajo', 'Medio', 'Alto']:
+    mask = risk == r
+    X_seg = X_test[mask].copy()
+    print(f'{r:<10}', end='')
+    for pc in price_changes:
+        X_mod = X_seg.copy()
+        for feat in price_features:
+            X_mod[feat] = X_mod[feat] * (1 + pc)
+        proba = gb_search.predict_proba(X_mod)[:, 1]
+        print(f'{proba.mean():>8.3f}', end='')
+    print()
+
+print(f'\nResultado contraintuitivo: subir precio REDUCE la probabilidad de churn predicha.')
+print(f'Esto ocurre porque el modelo aprendio que mas facturacion = menos churn.')
+print(f'Pero esa correlacion esta confundida: los que pagan mas son los que mas usan la plataforma.')
+print(f'\nConclusion: el modelo de churn NO sirve para analisis de sensibilidad al precio.')
+print(f'La relacion precio-churn no es causal en estos datos.')
+print(f'Para cuantificar el impacto real del precio en churn se necesitarian datos experimentales (A/B test).')
+
+```
+
+    Features de precio a variar: 10
+      monthly_total_invoice
+      monthly_avg_ad_price
+      monthly_total_invoice_std
+      monthly_avg_ad_price_std
+      monthly_avg_ad_price_month1
+      monthly_avg_ad_price_month2
+      monthly_total_invoice_month1
+      monthly_total_invoice_month2
+      cost_per_lead
+      monthly_total_invoice_trend
+    
+    Probabilidad media de churn por segmento y cambio de precio:
+    
+    Segmento      -20%    -10%     +0%    +10%    +20%    +30%
+    ----------------------------------------------------------
+    Bajo         0.036   0.032   0.028   0.027   0.028   0.030
+    Medio        0.194   0.195   0.174   0.166   0.159   0.161
+    Alto         0.500   0.525   0.537   0.514   0.492   0.479
+    
+    Resultado contraintuitivo: subir precio REDUCE la probabilidad de churn predicha.
+    Esto ocurre porque el modelo aprendio que mas facturacion = menos churn.
+    Pero esa correlacion esta confundida: los que pagan mas son los que mas usan la plataforma.
+    
+    Conclusion: el modelo de churn NO sirve para analisis de sensibilidad al precio.
+    La relacion precio-churn no es causal en estos datos.
+    Para cuantificar el impacto real del precio en churn se necesitarian datos experimentales (A/B test).
+
+
 ## Conclusiones
 
 **Modelo 1 — Churn a 3 meses (sin month3, sin right-censored invalidos)**
 
-1. **Datos**: 3733 contratos, churn rate 6.2%. Probado tambien con 4 y 5 meses.
+1. **Datos**: 3733 contratos, churn rate 6.2%. Probado con 3, 4 y 5 meses.
 
 2. **Leakage**: features de month3 excluidas (el mes 3 es el ultimo mes de los churned).
 
 3. **Rendimiento**: GB Tuned CV ROC AUC ~0.75, PR AUC ~0.21.
-   Con variable selection (top 15 features) + regularizacion, el gap train-test
+   Con variable selection (top 15) + regularizacion, el gap train-test
    se reduce de +0.38 a +0.15.
 
-4. **Estabilidad temporal**: el modelo no se degrada con el tiempo (walk-forward validation).
+4. **Overfitting**: las learning curves (logloss vs complejidad) muestran que GB
+   empieza a overfittear a partir de ~50 arboles. Limitar complejidad es clave.
 
-5. **Drivers de churn**: facturacion y ratios de uso. El precio no es el driver principal.
+5. **Estabilidad temporal**: walk-forward validation, el modelo no se degrada.
 
-6. **Impacto de negocio**: contactando al top 10% de riesgo se captura ~30% de churns.
+6. **Drivers de churn**: engagement y volumen de anuncios. El precio no es driver principal.
 
-7. **Perfiles de riesgo**: alto (~15%) con 36% churn real, bajo engagement y facturacion.
+7. **Sensibilidad al precio**: el modelo no sirve para esto. La relacion
+   precio-churn esta confundida por el engagement (los que pagan mas usan mas).
+   Se necesitarian datos experimentales para cuantificar el efecto causal.
 
-8. **PR AUC** como metrica clave por desbalanceo. El modelo mejora x3 sobre random.
+8. **Impacto de negocio**: contactando al top 10% de riesgo se captura ~31% de churns.
+
+9. **Perfiles de riesgo**: alto (~15%) con 36% churn real, bajo engagement y facturacion.
 

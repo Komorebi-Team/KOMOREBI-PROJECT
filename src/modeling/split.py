@@ -15,8 +15,7 @@ NON_FEATURE_COLS = [
     "contract_duration_months",
     "advertiser_group_id",
     "advertiser_province",
-    "is_right_censored",
-    "province_id"
+    "is_right_censored"
 ]
 
 

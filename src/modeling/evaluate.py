@@ -55,9 +55,13 @@ def cross_validate_models(models, X_train, y_train, groups=None):
 
     for name, model in models.items():
         scores = cross_val_score(
-            model, X_train, y_train,
-            cv=cv, groups=groups,
-            scoring="roc_auc", n_jobs=-1,
+            model,
+            X_train,
+            y_train,
+            cv=cv,
+            groups=groups,
+            scoring="roc_auc",
+            n_jobs=-1,
         )
         results.append({
             "Modelo": name,
@@ -75,8 +79,11 @@ def find_best_threshold(y_test, y_proba):
     f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-8)
     best_idx = np.argmax(f1_scores)
 
+    # precision_recall_curve devuelve un threshold menos que precisions/recalls
+    threshold = thresholds[best_idx] if best_idx < len(thresholds) else 1.0
+
     return {
-        "threshold": thresholds[best_idx],
+        "threshold": threshold,
         "precision": precisions[best_idx],
         "recall": recalls[best_idx],
         "f1": f1_scores[best_idx],
@@ -93,7 +100,6 @@ def plot_comparativa(results, y_test):
         Lista de resultados de evaluate_model.
     y_test : array
     """
-    # Excluir baseline de las curvas ROC
     model_results = [r for r in results if r["roc_auc"] > 0.5]
     best = max(model_results, key=lambda r: r["roc_auc"])
 
@@ -101,14 +107,18 @@ def plot_comparativa(results, y_test):
 
     for r in model_results:
         RocCurveDisplay.from_predictions(
-            y_test, r["y_proba"], name=r["name"], ax=axes[0],
+            y_test,
+            r["y_proba"],
+            name=r["name"],
+            ax=axes[0],
         )
     axes[0].plot([0, 1], [0, 1], "k--", label="Random")
     axes[0].set_title("Curvas ROC")
     axes[0].legend()
 
     ConfusionMatrixDisplay.from_predictions(
-        y_test, best["y_pred"],
+        y_test,
+        best["y_pred"],
         display_labels=["No churn", "Churn"],
         ax=axes[1],
     )
@@ -118,22 +128,140 @@ def plot_comparativa(results, y_test):
     plt.show()
 
 
-def plot_feature_importance(model, X_test, y_test, feature_cols, top_n=15):
-    """Feature importance con permutation importance."""
-    perm_imp = permutation_importance(
-        model, X_test, y_test,
-        n_repeats=10, random_state=42, scoring="roc_auc",
-    )
-    perm_series = pd.Series(
-        perm_imp.importances_mean, index=feature_cols,
+def plot_feature_importance(
+    model,
+    X_test,
+    y_test,
+    feature_cols=None,
+    top_n=15,
+    use_shap=False,
+    shap_sample=None,
+    shap_summary=True,
+):
+    """
+    Muestra importancia de variables con permutation importance o SHAP.
+
+    Parameters
+    ----------
+    model : estimator
+        Modelo entrenado.
+    X_test : pd.DataFrame
+        Conjunto de features sobre el que calcular importancias.
+    y_test : pd.Series | np.ndarray
+        Target real. Solo se usa para permutation importance.
+    feature_cols : list[str], optional
+        Nombres de columnas. Si X_test es DataFrame y no se pasa, se usan sus columnas.
+    top_n : int, default=15
+        Numero de variables a mostrar en el grafico de barras.
+    use_shap : bool, default=False
+        Si True, usa SHAP. Si False, usa permutation importance.
+    shap_sample : int, optional
+        Numero maximo de observaciones sobre las que calcular SHAP.
+        Util para reducir coste computacional.
+    shap_summary : bool, default=True
+        Si use_shap=True, muestra tambien el summary plot ademas del bar plot.
+
+    Returns
+    -------
+    pd.Series
+        Serie con las importancias medias por variable.
+    """
+    if feature_cols is None:
+        if isinstance(X_test, pd.DataFrame):
+            feature_cols = X_test.columns.tolist()
+        else:
+            raise ValueError(
+                "Si X_test no es un DataFrame, debes proporcionar feature_cols."
+            )
+
+    if not use_shap:
+        perm_imp = permutation_importance(
+            model,
+            X_test,
+            y_test,
+            n_repeats=10,
+            random_state=42,
+            scoring="roc_auc",
+        )
+        importance_series = pd.Series(
+            perm_imp.importances_mean,
+            index=feature_cols,
+        ).sort_values(ascending=True)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        importance_series.tail(top_n).plot(kind="barh", ax=ax)
+        ax.set_title(f"Top {top_n} features (permutation importance)")
+        ax.set_xlabel("Importancia")
+        plt.tight_layout()
+        plt.show()
+
+        return importance_series
+
+    # ---- SHAP ----
+    try:
+        import shap
+    except ImportError as exc:
+        raise ImportError(
+            "Para usar SHAP debes instalarlo: pip install shap"
+        ) from exc
+
+    if not isinstance(X_test, pd.DataFrame):
+        X_shap = pd.DataFrame(X_test, columns=feature_cols)
+    else:
+        X_shap = X_test.copy()
+
+    if shap_sample is not None and len(X_shap) > shap_sample:
+        X_shap = X_shap.sample(shap_sample, random_state=42)
+
+    logger.info("Calculando SHAP values sobre %d observaciones...", len(X_shap))
+
+    try:
+        explainer = shap.Explainer(model, X_shap)
+        shap_values = explainer(X_shap)
+        values = shap_values.values
+
+    except Exception:
+        logger.warning(
+            "No se pudo usar shap.Explainer de forma generica. "
+            "Probando con KernelExplainer, que puede ser mas lento."
+        )
+
+        background = X_shap.sample(min(100, len(X_shap)), random_state=42)
+
+        if hasattr(model, "predict_proba"):
+            explainer = shap.KernelExplainer(model.predict_proba, background)
+            values = explainer.shap_values(X_shap)
+            if isinstance(values, list):
+                values = values[1]
+        else:
+            explainer = shap.KernelExplainer(model.predict, background)
+            values = explainer.shap_values(X_shap)
+
+        shap_values = None
+
+    if values.ndim == 3:
+        values = values[:, :, 1]
+
+    mean_abs_shap = np.abs(values).mean(axis=0)
+    importance_series = pd.Series(
+        mean_abs_shap,
+        index=X_shap.columns,
     ).sort_values(ascending=True)
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    perm_series.tail(top_n).plot(kind="barh", ax=ax)
-    ax.set_title(f"Top {top_n} features (permutation importance)")
-    ax.set_xlabel("Importancia")
+    importance_series.tail(top_n).plot(kind="barh", ax=ax)
+    ax.set_title(f"Top {top_n} features (SHAP mean |value|)")
+    ax.set_xlabel("Mean |SHAP value|")
     plt.tight_layout()
     plt.show()
+
+    if shap_summary:
+        if shap_values is not None:
+            shap.summary_plot(shap_values, X_shap, show=True)
+        else:
+            shap.summary_plot(values, X_shap, show=True)
+
+    return importance_series
 
 
 def build_risk_profiles(model, X, y, bins=None, labels=None):

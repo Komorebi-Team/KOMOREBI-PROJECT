@@ -6,45 +6,43 @@ from src.utils import validate_columns
 logger = logging.getLogger(__name__)
 
 
-def _impute_zero_features(df: pd.DataFrame) -> pd.DataFrame:
+def _impute_zero_features(df: pd.DataFrame, custom_cols: list[str] | None = None) -> pd.DataFrame:
     """
-    Imputa con 0 columnas seleccionadas de distinct ads, invoice y ratios.
+    Imputa con 0 columnas seleccionadas.
 
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame a nivel contrato con features ya construidas.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame con imputación a 0 aplicada en las columnas disponibles.
+    custom_cols : list[str], optional
+        Lista de columnas a imputar con 0. 
+        Si es None, usa las listas predefinidas (backward compatibility).
     """
     df = df.copy()
 
-    distinct_cols = [
-        "monthly_distinct_ads",
-        "monthly_distinct_ads_month1",
-        "monthly_distinct_ads_month2",
-        "monthly_distinct_ads_month3",
-    ]
-
-    invoice_cols = [
-        "monthly_total_invoice_month1",
-        "monthly_total_invoice_month2",
-        "monthly_total_invoice_month3",
-    ]
-
-    ratio_cols = [
-        "usage_ratio",
-        "cost_per_lead",
-        "conversion_rate",
-        "premium_ratio",
-    ]
-
-    zero_impute_cols = [
-        c for c in distinct_cols + invoice_cols + ratio_cols if c in df.columns
-    ]
+    if custom_cols is not None:
+        zero_impute_cols = [c for c in custom_cols if c in df.columns]
+    else:
+        # Listas predefinidas por defecto
+        distinct_cols = [
+            "monthly_distinct_ads",
+            "monthly_distinct_ads_month1",
+            "monthly_distinct_ads_month2",
+            "monthly_distinct_ads_month3",
+        ]
+        invoice_cols = [
+            "monthly_total_invoice_month1",
+            "monthly_total_invoice_month2",
+            "monthly_total_invoice_month3",
+        ]
+        ratio_cols = [
+            "usage_ratio",
+            "cost_per_lead",
+            "conversion_rate",
+            "premium_ratio",
+        ]
+        zero_impute_cols = [
+            c for c in distinct_cols + invoice_cols + ratio_cols if c in df.columns
+        ]
 
     n_missing_before = (
         int(df[zero_impute_cols].isna().sum().sum()) if zero_impute_cols else 0
@@ -103,20 +101,19 @@ def _add_avg_price_missing_flags(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def prepare_model_features(df: pd.DataFrame) -> pd.DataFrame:
+def prepare_model_features(
+    df: pd.DataFrame, 
+    impute_config: dict[str, Any] | None = None
+) -> pd.DataFrame:
     """
-    Aplica transformaciones finales sobre features ya construidas:
-    imputación con 0 y creación de flags de missing.
+    Aplica transformaciones finales sobre features ya construidas.
 
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame a nivel contrato con features ya construidas.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame listo para modelado tras aplicar imputaciones y flags.
+    impute_config : dict, optional
+        Configuración de imputación. Keys:
+        - 'zero_impute_cols': list[str] (columnas a rellenar con 0)
     """
     expected_cols = {
         "monthly_distinct_ads",
@@ -127,7 +124,9 @@ def prepare_model_features(df: pd.DataFrame) -> pd.DataFrame:
     validate_columns(df, expected_cols, "prepare_model_features")
 
     df = df.copy()
-    df = _impute_zero_features(df)
+    
+    impute_cfg = impute_config or {}
+    df = _impute_zero_features(df, custom_cols=impute_cfg.get("zero_impute_cols"))
     df = _add_avg_price_missing_flags(df)
 
     logger.info(

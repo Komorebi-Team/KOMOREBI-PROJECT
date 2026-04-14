@@ -7,6 +7,9 @@ from sklearn.metrics import (
     classification_report,
     roc_auc_score,
     precision_recall_curve,
+    log_loss,
+    matthews_corrcoef,
+    brier_score_loss,
     RocCurveDisplay,
     ConfusionMatrixDisplay,
 )
@@ -16,22 +19,55 @@ from sklearn.model_selection import cross_val_score, GroupKFold
 logger = logging.getLogger(__name__)
 
 
-def evaluate_model(model, X_test, y_test, name="Modelo"):
-    """Evalua un modelo y devuelve metricas basicas."""
+def evaluate_model(model, X_test, y_test, name="Modelo", extra_metrics=None):
+    """
+    Evalua un modelo y devuelve metricas basicas y extra.
+
+    Parameters
+    ----------
+    model : estimator
+    X_test, y_test : arrays
+    name : str
+    extra_metrics : list[str], optional
+        Lista de nombres de funciones en sklearn.metrics (ej: ['log_loss', 'matthews_corrcoef']).
+
+    Returns
+    -------
+    dict con metricas.
+    """
     y_pred = model.predict(X_test)
     y_proba = model.predict_proba(X_test)[:, 1]
     accuracy = model.score(X_test, y_test)
     auc = roc_auc_score(y_test, y_proba)
 
-    logger.info("%s — Accuracy: %.3f, ROC AUC: %.3f", name, accuracy, auc)
-
-    return {
+    results = {
         "name": name,
         "accuracy": accuracy,
         "roc_auc": auc,
         "y_pred": y_pred,
         "y_proba": y_proba,
     }
+
+    if extra_metrics:
+        import sklearn.metrics as sk_metrics
+        for m_name in extra_metrics:
+            try:
+                metric_fn = getattr(sk_metrics, m_name)
+                # La mayoria de metricas de sklearn usan (y_true, y_pred)
+                # Algunas usan probabilidades (como log_loss o average_precision)
+                if m_name in ["log_loss", "brier_score_loss", "average_precision_score", "roc_auc_score"]:
+                    results[m_name] = metric_fn(y_test, y_proba)
+                else:
+                    results[m_name] = metric_fn(y_test, y_pred)
+            except Exception as e:
+                logger.warning("No se pudo calcular la metrica '%s': %s", m_name, e)
+
+    msg = f"{name} — Accuracy: {accuracy:.3f}, ROC AUC: {auc:.3f}"
+    if "log_loss" in results:
+        msg += f", Log Loss: {results['log_loss']:.3f}"
+    logger.info(msg)
+
+    return results
 
 
 def cross_validate_models(models, X_train, y_train, groups=None):
@@ -73,11 +109,35 @@ def cross_validate_models(models, X_train, y_train, groups=None):
     return pd.DataFrame(results)
 
 
-def find_best_threshold(y_test, y_proba):
-    """Encuentra el threshold que maximiza F1 para la clase positiva."""
+def find_best_threshold(y_test, y_proba, optimize_for="f1"):
+    """
+    Encuentra el threshold óptimo según la métrica especificada.
+
+    Parameters
+    ----------
+    y_test : array-like
+        Etiquetas reales.
+    y_proba : array-like
+        Probabilidades predichas para la clase positiva.
+    optimize_for : str, default="f1"
+        Métrica a maximizar: "f1", "precision", "recall".
+
+    Returns
+    -------
+    dict
+        Threshold y métricas asociadas en ese punto.
+    """
     precisions, recalls, thresholds = precision_recall_curve(y_test, y_proba)
     f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-8)
-    best_idx = np.argmax(f1_scores)
+
+    if optimize_for == "f1":
+        best_idx = np.argmax(f1_scores)
+    elif optimize_for == "precision":
+        best_idx = np.argmax(precisions)
+    elif optimize_for == "recall":
+        best_idx = np.argmax(recalls)
+    else:
+        raise ValueError(f"optimize_for debe ser 'f1', 'precision' o 'recall'. Recibido: {optimize_for}")
 
     # precision_recall_curve devuelve un threshold menos que precisions/recalls
     threshold = thresholds[best_idx] if best_idx < len(thresholds) else 1.0
@@ -87,6 +147,7 @@ def find_best_threshold(y_test, y_proba):
         "precision": precisions[best_idx],
         "recall": recalls[best_idx],
         "f1": f1_scores[best_idx],
+        "optimized_for": optimize_for,
     }
 
 
@@ -309,3 +370,59 @@ def build_risk_profiles(model, X, y, bins=None, labels=None):
         })
 
     return pd.DataFrame(profiles)
+
+
+def compute_top_k_metrics(X_test, y_test, y_proba, revenue_col=None, k_list=None):
+    """
+    Calcula precision y recall (y opcionalmente facturacion salvada) 
+    para los top K% clientes con mas riesgo.
+
+    Parameters
+    ----------
+    X_test : pd.DataFrame
+    y_test : pd.Series
+    y_proba : np.ndarray
+        Probabilidades de churn.
+    revenue_col : str, optional
+        Nombre de la columna de facturacion (ej: 'monthly_total_invoice').
+    k_list : list[int], optional
+        Lista de percentiles top a evaluar. Default: [5, 10, 20].
+
+    Returns
+    -------
+    pd.DataFrame con metricas de negocio por cada K%.
+    """
+    if k_list is None:
+        k_list = [5, 10, 20]
+
+    sorted_idx = np.argsort(-y_proba)
+    n_total = len(y_test)
+    total_churns = y_test.sum()
+
+    results = []
+    for k in k_list:
+        n_int = int(n_total * k / 100)
+        if n_int == 0:
+            continue
+
+        top_idx = sorted_idx[:n_int]
+        tp = y_test.iloc[top_idx].sum()
+        precision = tp / n_int
+        recall = tp / total_churns if total_churns > 0 else 0
+
+        res = {
+            "Top %": k,
+            "Intervenidos": n_int,
+            "Churns capturados": tp,
+            "Precision": precision,
+            "Recall": recall,
+        }
+
+        if revenue_col and revenue_col in X_test.columns:
+            invoices = X_test[revenue_col].values
+            inv_saved = invoices[top_idx][y_test.iloc[top_idx] == 1].sum()
+            res["Facturacion salvada"] = inv_saved
+
+        results.append(res)
+
+    return pd.DataFrame(results)

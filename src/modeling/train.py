@@ -23,29 +23,41 @@ def train_baseline(X_train: pd.DataFrame, y_train: pd.Series) -> DummyClassifier
     return model
 
 
-def train_logistic_regression(X_train: pd.DataFrame, y_train: pd.Series) -> Pipeline:
+def train_logistic_regression(
+    X_train: pd.DataFrame, 
+    y_train: pd.Series, 
+    random_state: int = 42
+) -> Pipeline:
     """Logistic regression con features escaladas y class_weight balanced."""
     model = Pipeline([
         ("scaler", StandardScaler()),
-        ("lr", LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)),
+        ("lr", LogisticRegression(max_iter=1000, class_weight="balanced", random_state=random_state)),
     ])
     model.fit(X_train, y_train)
     return model
 
 
-def train_random_forest(X_train: pd.DataFrame, y_train: pd.Series) -> RandomForestClassifier:
+def train_random_forest(
+    X_train: pd.DataFrame, 
+    y_train: pd.Series, 
+    random_state: int = 42
+) -> RandomForestClassifier:
     """Random forest con class_weight balanced."""
     model = RandomForestClassifier(
         n_estimators=200,
         class_weight="balanced",
-        random_state=42,
+        random_state=random_state,
         n_jobs=-1,
     )
     model.fit(X_train, y_train)
     return model
 
 
-def train_gradient_boosting(X_train: pd.DataFrame, y_train: pd.Series) -> HistGradientBoostingClassifier:
+def train_gradient_boosting(
+    X_train: pd.DataFrame, 
+    y_train: pd.Series, 
+    random_state: int = 42
+) -> HistGradientBoostingClassifier:
     """Gradient boosting con sample_weight para compensar desbalanceo."""
     sample_weights = compute_class_sample_weight(y_train)
 
@@ -53,7 +65,7 @@ def train_gradient_boosting(X_train: pd.DataFrame, y_train: pd.Series) -> HistGr
         max_iter=200,
         max_depth=5,
         learning_rate=0.1,
-        random_state=42,
+        random_state=random_state,
     )
     model.fit(X_train, y_train, sample_weight=sample_weights)
     return model
@@ -63,7 +75,8 @@ def tune_gradient_boosting(
     X_train: pd.DataFrame, 
     y_train: pd.Series, 
     groups: Optional[pd.Series] = None, 
-    n_iter: int = 50
+    n_iter: int = 50,
+    random_state: int = 42
 ) -> RandomizedSearchCV:
     """
     Tuning de hiperparametros de Gradient Boosting con RandomizedSearchCV.
@@ -76,11 +89,13 @@ def tune_gradient_boosting(
         Grupos para GroupKFold (advertiser_zrive_id).
     n_iter : int
         Numero de combinaciones a probar.
+    random_state : int
+        Semilla para reproducibilidad.
 
     Returns
     -------
     RandomizedSearchCV
-        Modelo tuneado (acceder al mejor con .best_estimator_).
+        Modelo tuneado.
     """
     sample_weights = compute_class_sample_weight(y_train)
 
@@ -96,12 +111,12 @@ def tune_gradient_boosting(
     cv = GroupKFold(n_splits=5) if groups is not None else 5
 
     search = RandomizedSearchCV(
-        HistGradientBoostingClassifier(random_state=42),
+        HistGradientBoostingClassifier(random_state=random_state),
         param_distributions=param_dist,
         n_iter=n_iter,
         scoring="roc_auc",
         cv=cv,
-        random_state=42,
+        random_state=random_state,
         n_jobs=-1,
     )
 
@@ -118,7 +133,11 @@ def tune_gradient_boosting(
 
     return search
 
-def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series) -> Any:
+def train_xgboost(
+    X_train: pd.DataFrame, 
+    y_train: pd.Series, 
+    random_state: int = 42
+) -> Any:
     """XGBoost con scale_pos_weight para compensar desbalanceo."""
     try:
         from xgboost import XGBClassifier
@@ -133,7 +152,7 @@ def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series) -> Any:
         max_depth=5,
         learning_rate=0.1,
         scale_pos_weight=scale,
-        random_state=42,
+        random_state=random_state,
         use_label_encoder=False,
         eval_metric="logloss",
         n_jobs=-1

@@ -141,7 +141,7 @@ def compute_shap_values(model, X_train, X_test):
         logger.info("Calculando valores SHAP (esto puede tardar unos segundos)...")
         # Explainer automatico (selecciona TreeExplainer para modelos de arboles)
         explainer = shap.Explainer(model, X_train_sub)
-        shap_values = explainer(X_test_sub)
+        shap_values = explainer(X_test_sub, check_additivity=False)
         
         return shap_values
     except Exception as e:

@@ -1,4 +1,5 @@
 import logging
+from typing import Any, List, Optional, Dict
 
 import numpy as np
 import pandas as pd
@@ -106,7 +107,46 @@ def cross_validate_models(models, X_train, y_train, groups=None):
         })
         logger.info("CV %s: mean=%.3f, std=%.3f", name, scores.mean(), scores.std())
 
-    return pd.DataFrame(results)
+def compute_shap_values(model, X_train, X_test):
+    """
+    Calcula valores SHAP para el conjunto de test.
+
+    Parameters
+    ----------
+    model : estimator
+    X_train : pd.DataFrame
+        Usado como background para el explainer.
+    X_test : pd.DataFrame
+        Conjunto para el cual calcular explicaciones.
+
+    Returns
+    -------
+    shap_values o None si falla.
+    """
+    try:
+        import shap
+    except ImportError:
+        logger.warning("La libreria 'shap' no esta instalada. No se calcularan valores SHAP.")
+        return None
+
+    try:
+        # Usar el subset de columnas que el modelo conoce para evitar errores
+        if hasattr(model, "feature_names_in_"):
+            X_train_sub = X_train[model.feature_names_in_]
+            X_test_sub = X_test[model.feature_names_in_]
+        else:
+            X_train_sub = X_train
+            X_test_sub = X_test
+
+        logger.info("Calculando valores SHAP (esto puede tardar unos segundos)...")
+        # Explainer automatico (selecciona TreeExplainer para modelos de arboles)
+        explainer = shap.Explainer(model, X_train_sub)
+        shap_values = explainer(X_test_sub)
+        
+        return shap_values
+    except Exception as e:
+        logger.error("Error al calcular SHAP: %s", e)
+        return None
 
 
 def find_best_threshold(y_test, y_proba, optimize_for="f1"):
@@ -325,7 +365,7 @@ def plot_feature_importance(
     return importance_series
 
 
-def build_risk_profiles(model, X, y, bins=None, labels=None):
+def build_risk_profiles(model, X, y, y_proba=None, bins=None, labels=None):
     """
     Segmenta contratos en perfiles de riesgo y devuelve estadisticas.
 
@@ -334,9 +374,11 @@ def build_risk_profiles(model, X, y, bins=None, labels=None):
     model : estimator
         Modelo entrenado.
     X : pd.DataFrame
-        Features.
+        Dataset (pueden ser features o el DF completo restringido a test).
     y : pd.Series
         Target real.
+    y_proba : np.ndarray, optional
+        Probabilidades ya calculadas. Si no se pasan, se calculan usando X.
     bins : list, optional
         Limites de los buckets de probabilidad. Default: [0, 0.1, 0.3, 1.0]
     labels : list, optional
@@ -352,22 +394,41 @@ def build_risk_profiles(model, X, y, bins=None, labels=None):
         labels = ["Bajo", "Medio", "Alto"]
 
     df = X.copy()
-    df["churn_proba"] = model.predict_proba(X)[:, 1]
+    
+    if y_proba is None:
+        # Intentar predecir. Nota: sklearn falla si X tiene columnas extra no vistas en fit.
+        # Si esto falla en el futuro, es mejor pasar y_proba desde fuera.
+        if hasattr(model, "feature_names_in_"):
+            y_proba = model.predict_proba(X[model.feature_names_in_])[:, 1]
+        else:
+            y_proba = model.predict_proba(X)[:, 1]
+            
+    df["churn_proba"] = y_proba
     df["churned"] = y.values
     df["riesgo"] = pd.cut(df["churn_proba"], bins=bins, labels=labels)
+
+    # Columnas de negocio de interes si estan presentes
+    business_cols = {
+        "monthly_total_invoice": "Facturacion media",
+        "monthly_leads": "Leads medio",
+        "monthly_visits": "Visitas media",
+        "usage_ratio": "Usage ratio",
+    }
 
     profiles = []
     for riesgo in labels:
         mask = df["riesgo"] == riesgo
-        profiles.append({
+        profile = {
             "Riesgo": riesgo,
-            "N contratos": mask.sum(),
+            "N contratos": int(mask.sum()),
             "Churn real": df.loc[mask, "churned"].mean(),
-            "Facturacion media": df.loc[mask, "monthly_total_invoice"].mean(),
-            "Leads medio": df.loc[mask, "monthly_leads"].mean(),
-            "Visitas media": df.loc[mask, "monthly_visits"].mean(),
-            "Usage ratio": df.loc[mask, "usage_ratio"].mean(),
-        })
+        }
+        # Añadir metricas de negocio dinamicamente
+        for col, col_label in business_cols.items():
+            if col in df.columns:
+                profile[col_label] = df.loc[mask, col].mean()
+
+        profiles.append(profile)
 
     return pd.DataFrame(profiles)
 

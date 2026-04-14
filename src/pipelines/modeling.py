@@ -1,7 +1,7 @@
 import logging
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Optional, Dict
 
 import joblib
 import numpy as np
@@ -14,6 +14,7 @@ from src.modeling.evaluate import (
     find_best_threshold,
     build_risk_profiles,
     compute_top_k_metrics,
+    compute_shap_values,
 )
 from src.utils import compute_class_sample_weight
 
@@ -218,18 +219,27 @@ def run_modeling_pipeline(
     )
 
     # --- Perfiles de riesgo ---
+    # Creamos un DF con todas las columnas originales para el conjunto de test
+    # para asegurar que las metricas de negocio (facturacion, etc) estan presentes
+    X_test_full = df.loc[X_test.index]
+
     risk_profiles = build_risk_profiles(
-        model, X_test, y_test, bins=risk_bins, labels=risk_labels
+        model, X_test_full, y_test, y_proba=metrics["y_proba"], bins=risk_bins, labels=risk_labels
     )
 
     # --- Metricas de negocio (Top K%) ---
     business_metrics = compute_top_k_metrics(
-        X_test,
+        X_test_full,
         y_test,
         metrics["y_proba"],
         revenue_col=eval_cfg.get("revenue_col"),
         k_list=eval_cfg.get("top_k_list"),
     )
+
+    # --- SHAP values (opcional) ---
+    shap_results = None
+    if eval_cfg.get("compute_shap", False):
+        shap_results = compute_shap_values(model, X_train, X_test)
 
     model_path = None
     if save_model_flag:
@@ -256,4 +266,5 @@ def run_modeling_pipeline(
         "cv_results": cv_results,
         "risk_profiles": risk_profiles,
         "business_metrics": business_metrics,
+        "shap_values": shap_results,
     }

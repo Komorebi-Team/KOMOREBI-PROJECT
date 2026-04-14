@@ -1,5 +1,5 @@
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Any, Optional, Dict
 
 import numpy as np
 import pandas as pd
@@ -40,7 +40,7 @@ def get_feature_cols(
     extra_non_features : list[str], optional
         Columnas adicionales a excluir.
     """
-    prefixes = feature_prefixes or ["invoice_post_", "stable_price", "n_months_post_onboarding"]
+    prefixes = feature_prefixes or ["monthly_", "usage_", "cost_", "conversion_", "premium_"]
     exclude = set(DEFAULT_NON_FEATURE_COLS + [target])
     if extra_non_features:
         exclude.update(extra_non_features)

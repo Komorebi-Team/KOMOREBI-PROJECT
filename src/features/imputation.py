@@ -7,43 +7,72 @@ from src.utils import validate_columns
 logger = logging.getLogger(__name__)
 
 
-def _impute_zero_features(df: pd.DataFrame, custom_cols: list[str] | None = None) -> pd.DataFrame:
+def _impute_zero_features(
+    df: pd.DataFrame,
+    custom_cols: list[str] | None = None,
+    mode: str = "default",
+) -> pd.DataFrame:
     """
     Imputa con 0 columnas seleccionadas.
 
     Parameters
     ----------
     df : pd.DataFrame
+        DataFrame de entrada.
     custom_cols : list[str], optional
-        Lista de columnas a imputar con 0. 
-        Si es None, usa las listas predefinidas (backward compatibility).
+        Lista de columnas personalizadas a imputar con 0.
+    mode : {"default", "custom", "default_plus_custom"}, default="default"
+        Estrategia para seleccionar columnas a imputar:
+        - "default": usa solo las columnas por defecto
+        - "custom": usa solo `custom_cols`
+        - "default_plus_custom": combina columnas por defecto y `custom_cols`
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame con la imputación aplicada.
     """
     df = df.copy()
 
-    if custom_cols is not None:
-        zero_impute_cols = [c for c in custom_cols if c in df.columns]
-    else:
-        # Listas predefinidas por defecto
-        distinct_cols = [
-            "monthly_distinct_ads",
-            "monthly_distinct_ads_month1",
-            "monthly_distinct_ads_month2",
-            "monthly_distinct_ads_month3",
-        ]
-        invoice_cols = [
-            "monthly_total_invoice_month1",
-            "monthly_total_invoice_month2",
-            "monthly_total_invoice_month3",
-        ]
-        ratio_cols = [
+    if mode not in {"default", "custom", "default_plus_custom"}:
+        raise ValueError(
+            "mode debe ser 'default', 'custom' o 'default_plus_custom'."
+        )
+
+    # Columnas por defecto parametrizadas por patrón
+    default_distinct_cols = [
+        c
+        for c in df.columns
+        if c == "monthly_distinct_ads" or c.startswith("monthly_distinct_ads_month")
+    ]
+    default_invoice_cols = [
+        c
+        for c in df.columns
+        if c.startswith("monthly_total_invoice")
+    ]
+    default_ratio_cols = [
+        c
+        for c in [
             "usage_ratio",
             "cost_per_lead",
             "conversion_rate",
             "premium_ratio",
         ]
-        zero_impute_cols = [
-            c for c in distinct_cols + invoice_cols + ratio_cols if c in df.columns
-        ]
+        if c in df.columns
+    ]
+
+    default_cols = default_distinct_cols + default_invoice_cols + default_ratio_cols
+    custom_cols_valid = [c for c in (custom_cols or []) if c in df.columns]
+
+    if mode == "default":
+        zero_impute_cols = default_cols
+        label = "Columnas imputadas por defecto"
+    elif mode == "custom":
+        zero_impute_cols = custom_cols_valid
+        label = "Columnas imputadas personalizadas"
+    else:  # default_plus_custom
+        zero_impute_cols = list(dict.fromkeys(default_cols + custom_cols_valid))
+        label = "Columnas imputadas por defecto + personalizadas"
 
     n_missing_before = (
         int(df[zero_impute_cols].isna().sum().sum()) if zero_impute_cols else 0
@@ -53,9 +82,11 @@ def _impute_zero_features(df: pd.DataFrame, custom_cols: list[str] | None = None
         df[zero_impute_cols] = df[zero_impute_cols].fillna(0)
 
     logger.info(
-        "impute_zero_features: imputadas %s columnas con 0 (%s nulos totales antes de imputar).",
+        "impute_zero_features: imputadas %s columnas con 0 (%s nulos totales antes de imputar). %s: %s",
         len(zero_impute_cols),
         n_missing_before,
+        label,
+        zero_impute_cols,
     )
 
     return df

@@ -1652,6 +1652,133 @@ print(f"capturaba la senal de abandono (leakage).")
     capturaba la senal de abandono (leakage).
 
 
+## 8b. Variable selection y regularizacion
+
+Con 72 features y solo 230 positivos, los arboles memorizan facilmente.
+Probamos reducir a las top N features (por permutation importance)
+y aumentar la regularizacion para reducir el overfitting.
+
+
+```python
+# Ranking de features por permutation importance
+feat_ranking = pd.Series(
+    perm_imp.importances_mean, index=feature_cols
+).sort_values(ascending=False)
+
+# Probar con distintos numeros de features
+print(f"{'Config':<35} {'N feat':>6} {'Train AUC':>10} {'CV AUC':>8} {'CV Std':>8} {'Test AUC':>10} {'PR AUC':>8} {'Gap':>8}")
+print("=" * 90)
+
+for n_feat in [5, 10, 15, 20, 30, len(feature_cols)]:
+    top_feats = list(feat_ranking.head(n_feat).index)
+    X_tr = df[top_feats].fillna(0).iloc[train_idx]
+    X_te = df[top_feats].fillna(0).iloc[test_idx]
+
+    gb_vs = HistGradientBoostingClassifier(max_iter=200, max_depth=5, learning_rate=0.1, random_state=42)
+    gb_vs.fit(X_tr, y_train, sample_weight=sample_weights)
+
+    train_auc = roc_auc_score(y_train, gb_vs.predict_proba(X_tr)[:, 1])
+    scores = cross_val_score(gb_vs, X_tr, y_train, cv=gkf, groups=groups_train, scoring="roc_auc", n_jobs=-1)
+    y_proba_vs = gb_vs.predict_proba(X_te)[:, 1]
+    test_auc = roc_auc_score(y_test, y_proba_vs)
+    pr_auc = average_precision_score(y_test, y_proba_vs)
+    gap = train_auc - test_auc
+
+    label = f"Top {n_feat} features" if n_feat < len(feature_cols) else f"All {n_feat} features"
+    print(f"{label:<35} {n_feat:>6} {train_auc:>10.3f} {scores.mean():>8.3f} {scores.std():>8.3f} {test_auc:>10.3f} {pr_auc:>8.3f} {gap:>+8.3f}")
+
+```
+
+    Config                              N feat  Train AUC   CV AUC   CV Std   Test AUC   PR AUC      Gap
+    ==========================================================================================
+
+
+    Top 5 features                           5      0.990    0.744    0.042      0.652    0.142   +0.339
+
+
+    Top 10 features                         10      0.998    0.733    0.012      0.673    0.172   +0.325
+
+
+    Top 15 features                         15      0.999    0.726    0.027      0.674    0.196   +0.324
+
+
+    Top 20 features                         20      1.000    0.729    0.025      0.679    0.178   +0.320
+
+
+    Top 30 features                         30      1.000    0.767    0.035      0.690    0.160   +0.310
+
+
+    All 72 features                         72      1.000    0.769    0.057      0.616    0.227   +0.384
+
+
+
+```python
+# Top 15 features con regularizacion progresiva
+top15 = list(feat_ranking.head(15).index)
+X_tr15 = df[top15].fillna(0).iloc[train_idx]
+X_te15 = df[top15].fillna(0).iloc[test_idx]
+
+configs = [
+    ("Default (depth=5, lr=0.1)", {"max_iter": 200, "max_depth": 5, "learning_rate": 0.1}),
+    ("Menos profundo (depth=3)", {"max_iter": 200, "max_depth": 3, "learning_rate": 0.1}),
+    ("depth=3, lr=0.05, leaf=30", {"max_iter": 200, "max_depth": 3, "learning_rate": 0.05, "min_samples_leaf": 30}),
+    ("Regularizado (depth=2, l2=1)", {"max_iter": 150, "max_depth": 2, "learning_rate": 0.05, "min_samples_leaf": 50, "l2_regularization": 1.0}),
+]
+
+print(f"Top 15 features + regularizacion:")
+print(f"{'Config':<35} {'Train AUC':>10} {'CV AUC':>8} {'CV Std':>8} {'Test AUC':>10} {'PR AUC':>8} {'Gap':>8}")
+print("=" * 90)
+for name, params in configs:
+    gb_reg = HistGradientBoostingClassifier(random_state=42, **params)
+    gb_reg.fit(X_tr15, y_train, sample_weight=sample_weights)
+
+    train_auc = roc_auc_score(y_train, gb_reg.predict_proba(X_tr15)[:, 1])
+    scores = cross_val_score(gb_reg, X_tr15, y_train, cv=gkf, groups=groups_train, scoring="roc_auc", n_jobs=-1)
+    y_proba_reg = gb_reg.predict_proba(X_te15)[:, 1]
+    test_auc = roc_auc_score(y_test, y_proba_reg)
+    pr_auc = average_precision_score(y_test, y_proba_reg)
+    gap = train_auc - test_auc
+
+    print(f"{name:<35} {train_auc:>10.3f} {scores.mean():>8.3f} {scores.std():>8.3f} {test_auc:>10.3f} {pr_auc:>8.3f} {gap:>+8.3f}")
+
+print(f"\nFeatures seleccionadas (top 15):")
+for f in top15:
+    print(f"  - {f}")
+
+```
+
+    Top 15 features + regularizacion:
+    Config                               Train AUC   CV AUC   CV Std   Test AUC   PR AUC      Gap
+    ==========================================================================================
+
+
+    Default (depth=5, lr=0.1)                0.999    0.726    0.027      0.674    0.196   +0.324
+
+
+    Menos profundo (depth=3)                 0.982    0.730    0.026      0.689    0.216   +0.293
+
+
+    depth=3, lr=0.05, leaf=30                0.951    0.754    0.031      0.706    0.244   +0.245
+    Regularizado (depth=2, l2=1)             0.868    0.752    0.035      0.722    0.178   +0.146
+    
+    Features seleccionadas (top 15):
+      - monthly_total_invoice_month2
+      - usage_ratio
+      - monthly_total_invoice
+      - monthly_published_ads
+      - monthly_contracted_ads
+      - has_group
+      - monthly_total_emails_std
+      - monthly_published_ads_std
+      - monthly_distinct_ads
+      - monthly_total_invoice_month1
+      - cost_per_lead
+      - monthly_contracted_ads_month1
+      - monthly_contracted_ads_month2
+      - monthly_contracted_ads_std
+      - monthly_distinct_ads_std
+
+
 ## 9. Threshold optimo
 
 Con un dataset desbalanceado, el threshold por defecto (0.5) es muy conservador.
@@ -1700,7 +1827,7 @@ print(classification_report(y_test, y_pred_optimal, target_names=["No churn", "C
 
 
     
-![png](evaluation_files/evaluation_26_1.png)
+![png](evaluation_files/evaluation_29_1.png)
     
 
 
@@ -1817,7 +1944,7 @@ plt.show()
 
 
     
-![png](evaluation_files/evaluation_31_0.png)
+![png](evaluation_files/evaluation_34_0.png)
     
 
 
@@ -1868,7 +1995,7 @@ print(f"Invoice media churn: {X.loc[churned_mask, 'monthly_total_invoice'].mean(
 
 
     
-![png](evaluation_files/evaluation_33_0.png)
+![png](evaluation_files/evaluation_36_0.png)
     
 
 

@@ -1,4 +1,5 @@
 import logging
+from typing import Any, List, Optional, Dict
 
 import numpy as np
 import pandas as pd
@@ -7,6 +8,9 @@ from sklearn.metrics import (
     classification_report,
     roc_auc_score,
     precision_recall_curve,
+    log_loss,
+    matthews_corrcoef,
+    brier_score_loss,
     RocCurveDisplay,
     ConfusionMatrixDisplay,
 )
@@ -16,22 +20,55 @@ from sklearn.model_selection import cross_val_score, GroupKFold
 logger = logging.getLogger(__name__)
 
 
-def evaluate_model(model, X_test, y_test, name="Modelo"):
-    """Evalua un modelo y devuelve metricas basicas."""
+def evaluate_model(model, X_test, y_test, name="Modelo", extra_metrics=None):
+    """
+    Evalua un modelo y devuelve metricas basicas y extra.
+
+    Parameters
+    ----------
+    model : estimator
+    X_test, y_test : arrays
+    name : str
+    extra_metrics : list[str], optional
+        Lista de nombres de funciones en sklearn.metrics (ej: ['log_loss', 'matthews_corrcoef']).
+
+    Returns
+    -------
+    dict con metricas.
+    """
     y_pred = model.predict(X_test)
     y_proba = model.predict_proba(X_test)[:, 1]
     accuracy = model.score(X_test, y_test)
     auc = roc_auc_score(y_test, y_proba)
 
-    logger.info("%s — Accuracy: %.3f, ROC AUC: %.3f", name, accuracy, auc)
-
-    return {
+    results = {
         "name": name,
         "accuracy": accuracy,
         "roc_auc": auc,
         "y_pred": y_pred,
         "y_proba": y_proba,
     }
+
+    if extra_metrics:
+        import sklearn.metrics as sk_metrics
+        for m_name in extra_metrics:
+            try:
+                metric_fn = getattr(sk_metrics, m_name)
+                # La mayoria de metricas de sklearn usan (y_true, y_pred)
+                # Algunas usan probabilidades (como log_loss o average_precision)
+                if m_name in ["log_loss", "brier_score_loss", "average_precision_score", "roc_auc_score"]:
+                    results[m_name] = metric_fn(y_test, y_proba)
+                else:
+                    results[m_name] = metric_fn(y_test, y_pred)
+            except Exception as e:
+                logger.warning("No se pudo calcular la metrica '%s': %s", m_name, e)
+
+    msg = f"{name} — Accuracy: {accuracy:.3f}, ROC AUC: {auc:.3f}"
+    if "log_loss" in results:
+        msg += f", Log Loss: {results['log_loss']:.3f}"
+    logger.info(msg)
+
+    return results
 
 
 def cross_validate_models(models, X_train, y_train, groups=None):
@@ -55,9 +92,13 @@ def cross_validate_models(models, X_train, y_train, groups=None):
 
     for name, model in models.items():
         scores = cross_val_score(
-            model, X_train, y_train,
-            cv=cv, groups=groups,
-            scoring="roc_auc", n_jobs=-1,
+            model,
+            X_train,
+            y_train,
+            cv=cv,
+            groups=groups,
+            scoring="roc_auc",
+            n_jobs=-1,
         )
         results.append({
             "Modelo": name,
@@ -66,20 +107,89 @@ def cross_validate_models(models, X_train, y_train, groups=None):
         })
         logger.info("CV %s: mean=%.3f, std=%.3f", name, scores.mean(), scores.std())
 
-    return pd.DataFrame(results)
+    return pd.DataFrame(results) 
+
+def compute_shap_values(model, X_train, X_test):
+    """
+    Calcula valores SHAP para el conjunto de test.
+
+    Parameters
+    ----------
+    model : estimator
+    X_train : pd.DataFrame
+        Usado como background para el explainer.
+    X_test : pd.DataFrame
+        Conjunto para el cual calcular explicaciones.
+
+    Returns
+    -------
+    shap_values o None si falla.
+    """
+    try:
+        import shap
+    except ImportError:
+        logger.warning("La libreria 'shap' no esta instalada. No se calcularan valores SHAP.")
+        return None
+
+    try:
+        # Usar el subset de columnas que el modelo conoce para evitar errores
+        if hasattr(model, "feature_names_in_"):
+            X_train_sub = X_train[model.feature_names_in_]
+            X_test_sub = X_test[model.feature_names_in_]
+        else:
+            X_train_sub = X_train
+            X_test_sub = X_test
+
+        logger.info("Calculando valores SHAP (esto puede tardar unos segundos)...")
+        # Explainer automatico (selecciona TreeExplainer para modelos de arboles)
+        explainer = shap.Explainer(model, X_train_sub)
+        shap_values = explainer(X_test_sub, check_additivity=False)
+        
+        return shap_values
+    except Exception as e:
+        logger.error("Error al calcular SHAP: %s", e)
+        return None
 
 
-def find_best_threshold(y_test, y_proba):
-    """Encuentra el threshold que maximiza F1 para la clase positiva."""
+def find_best_threshold(y_test, y_proba, optimize_for="f1"):
+    """
+    Encuentra el threshold óptimo según la métrica especificada.
+
+    Parameters
+    ----------
+    y_test : array-like
+        Etiquetas reales.
+    y_proba : array-like
+        Probabilidades predichas para la clase positiva.
+    optimize_for : str, default="f1"
+        Métrica a maximizar: "f1", "precision", "recall".
+
+    Returns
+    -------
+    dict
+        Threshold y métricas asociadas en ese punto.
+    """
     precisions, recalls, thresholds = precision_recall_curve(y_test, y_proba)
     f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-8)
-    best_idx = np.argmax(f1_scores)
+
+    if optimize_for == "f1":
+        best_idx = np.argmax(f1_scores)
+    elif optimize_for == "precision":
+        best_idx = np.argmax(precisions)
+    elif optimize_for == "recall":
+        best_idx = np.argmax(recalls)
+    else:
+        raise ValueError(f"optimize_for debe ser 'f1', 'precision' o 'recall'. Recibido: {optimize_for}")
+
+    # precision_recall_curve devuelve un threshold menos que precisions/recalls
+    threshold = thresholds[best_idx] if best_idx < len(thresholds) else 1.0
 
     return {
-        "threshold": thresholds[best_idx],
+        "threshold": threshold,
         "precision": precisions[best_idx],
         "recall": recalls[best_idx],
         "f1": f1_scores[best_idx],
+        "optimized_for": optimize_for,
     }
 
 
@@ -93,7 +203,6 @@ def plot_comparativa(results, y_test):
         Lista de resultados de evaluate_model.
     y_test : array
     """
-    # Excluir baseline de las curvas ROC
     model_results = [r for r in results if r["roc_auc"] > 0.5]
     best = max(model_results, key=lambda r: r["roc_auc"])
 
@@ -101,14 +210,18 @@ def plot_comparativa(results, y_test):
 
     for r in model_results:
         RocCurveDisplay.from_predictions(
-            y_test, r["y_proba"], name=r["name"], ax=axes[0],
+            y_test,
+            r["y_proba"],
+            name=r["name"],
+            ax=axes[0],
         )
     axes[0].plot([0, 1], [0, 1], "k--", label="Random")
     axes[0].set_title("Curvas ROC")
     axes[0].legend()
 
     ConfusionMatrixDisplay.from_predictions(
-        y_test, best["y_pred"],
+        y_test,
+        best["y_pred"],
         display_labels=["No churn", "Churn"],
         ax=axes[1],
     )
@@ -118,25 +231,143 @@ def plot_comparativa(results, y_test):
     plt.show()
 
 
-def plot_feature_importance(model, X_test, y_test, feature_cols, top_n=15):
-    """Feature importance con permutation importance."""
-    perm_imp = permutation_importance(
-        model, X_test, y_test,
-        n_repeats=10, random_state=42, scoring="roc_auc",
-    )
-    perm_series = pd.Series(
-        perm_imp.importances_mean, index=feature_cols,
+def plot_feature_importance(
+    model,
+    X_test,
+    y_test,
+    feature_cols=None,
+    top_n=15,
+    use_shap=False,
+    shap_sample=None,
+    shap_summary=True,
+):
+    """
+    Muestra importancia de variables con permutation importance o SHAP.
+
+    Parameters
+    ----------
+    model : estimator
+        Modelo entrenado.
+    X_test : pd.DataFrame
+        Conjunto de features sobre el que calcular importancias.
+    y_test : pd.Series | np.ndarray
+        Target real. Solo se usa para permutation importance.
+    feature_cols : list[str], optional
+        Nombres de columnas. Si X_test es DataFrame y no se pasa, se usan sus columnas.
+    top_n : int, default=15
+        Numero de variables a mostrar en el grafico de barras.
+    use_shap : bool, default=False
+        Si True, usa SHAP. Si False, usa permutation importance.
+    shap_sample : int, optional
+        Numero maximo de observaciones sobre las que calcular SHAP.
+        Util para reducir coste computacional.
+    shap_summary : bool, default=True
+        Si use_shap=True, muestra tambien el summary plot ademas del bar plot.
+
+    Returns
+    -------
+    pd.Series
+        Serie con las importancias medias por variable.
+    """
+    if feature_cols is None:
+        if isinstance(X_test, pd.DataFrame):
+            feature_cols = X_test.columns.tolist()
+        else:
+            raise ValueError(
+                "Si X_test no es un DataFrame, debes proporcionar feature_cols."
+            )
+
+    if not use_shap:
+        perm_imp = permutation_importance(
+            model,
+            X_test,
+            y_test,
+            n_repeats=10,
+            random_state=42,
+            scoring="roc_auc",
+        )
+        importance_series = pd.Series(
+            perm_imp.importances_mean,
+            index=feature_cols,
+        ).sort_values(ascending=True)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        importance_series.tail(top_n).plot(kind="barh", ax=ax)
+        ax.set_title(f"Top {top_n} features (permutation importance)")
+        ax.set_xlabel("Importancia")
+        plt.tight_layout()
+        plt.show()
+
+        return importance_series
+
+    # ---- SHAP ----
+    try:
+        import shap
+    except ImportError as exc:
+        raise ImportError(
+            "Para usar SHAP debes instalarlo: pip install shap"
+        ) from exc
+
+    if not isinstance(X_test, pd.DataFrame):
+        X_shap = pd.DataFrame(X_test, columns=feature_cols)
+    else:
+        X_shap = X_test.copy()
+
+    if shap_sample is not None and len(X_shap) > shap_sample:
+        X_shap = X_shap.sample(shap_sample, random_state=42)
+
+    logger.info("Calculando SHAP values sobre %d observaciones...", len(X_shap))
+
+    try:
+        explainer = shap.Explainer(model, X_shap)
+        shap_values = explainer(X_shap)
+        values = shap_values.values
+
+    except Exception:
+        logger.warning(
+            "No se pudo usar shap.Explainer de forma generica. "
+            "Probando con KernelExplainer, que puede ser mas lento."
+        )
+
+        background = X_shap.sample(min(100, len(X_shap)), random_state=42)
+
+        if hasattr(model, "predict_proba"):
+            explainer = shap.KernelExplainer(model.predict_proba, background)
+            values = explainer.shap_values(X_shap)
+            if isinstance(values, list):
+                values = values[1]
+        else:
+            explainer = shap.KernelExplainer(model.predict, background)
+            values = explainer.shap_values(X_shap)
+
+        shap_values = None
+
+    if values.ndim == 3:
+        values = values[:, :, 1]
+
+    mean_abs_shap = np.abs(values).mean(axis=0)
+    importance_series = pd.Series(
+        mean_abs_shap,
+        index=X_shap.columns,
     ).sort_values(ascending=True)
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    perm_series.tail(top_n).plot(kind="barh", ax=ax)
-    ax.set_title(f"Top {top_n} features (permutation importance)")
-    ax.set_xlabel("Importancia")
+    importance_series.tail(top_n).plot(kind="barh", ax=ax)
+    ax.set_title(f"Top {top_n} features (SHAP mean |value|)")
+    ax.set_xlabel("Mean |SHAP value|")
     plt.tight_layout()
     plt.show()
 
+    if shap_summary:
+        if shap_values is not None:
+            shap.summary_plot(shap_values, X_shap, show=True)
+        else:
+            shap.summary_plot(values, X_shap, show=True)
 
-def build_risk_profiles(model, X, y, bins=None, labels=None):
+    return importance_series
+
+
+def build_risk_profiles(model, X, y, y_proba=None, bins=None, labels=None):
     """
     Segmenta contratos en perfiles de riesgo y devuelve estadisticas.
 
@@ -145,9 +376,11 @@ def build_risk_profiles(model, X, y, bins=None, labels=None):
     model : estimator
         Modelo entrenado.
     X : pd.DataFrame
-        Features.
+        Dataset (pueden ser features o el DF completo restringido a test).
     y : pd.Series
         Target real.
+    y_proba : np.ndarray, optional
+        Probabilidades ya calculadas. Si no se pasan, se calculan usando X.
     bins : list, optional
         Limites de los buckets de probabilidad. Default: [0, 0.1, 0.3, 1.0]
     labels : list, optional
@@ -163,21 +396,96 @@ def build_risk_profiles(model, X, y, bins=None, labels=None):
         labels = ["Bajo", "Medio", "Alto"]
 
     df = X.copy()
-    df["churn_proba"] = model.predict_proba(X)[:, 1]
+    
+    if y_proba is None:
+        # Intentar predecir. Nota: sklearn falla si X tiene columnas extra no vistas en fit.
+        # Si esto falla en el futuro, es mejor pasar y_proba desde fuera.
+        if hasattr(model, "feature_names_in_"):
+            y_proba = model.predict_proba(X[model.feature_names_in_])[:, 1]
+        else:
+            y_proba = model.predict_proba(X)[:, 1]
+            
+    df["churn_proba"] = y_proba
     df["churned"] = y.values
     df["riesgo"] = pd.cut(df["churn_proba"], bins=bins, labels=labels)
+
+    # Columnas de negocio de interes si estan presentes
+    business_cols = {
+        "monthly_total_invoice": "Facturacion media",
+        "monthly_leads": "Leads medio",
+        "monthly_visits": "Visitas media",
+        "usage_ratio": "Usage ratio",
+    }
 
     profiles = []
     for riesgo in labels:
         mask = df["riesgo"] == riesgo
-        profiles.append({
+        profile = {
             "Riesgo": riesgo,
-            "N contratos": mask.sum(),
+            "N contratos": int(mask.sum()),
             "Churn real": df.loc[mask, "churned"].mean(),
-            "Facturacion media": df.loc[mask, "monthly_total_invoice"].mean(),
-            "Leads medio": df.loc[mask, "monthly_leads"].mean(),
-            "Visitas media": df.loc[mask, "monthly_visits"].mean(),
-            "Usage ratio": df.loc[mask, "usage_ratio"].mean(),
-        })
+        }
+        # Añadir metricas de negocio dinamicamente
+        for col, col_label in business_cols.items():
+            if col in df.columns:
+                profile[col_label] = df.loc[mask, col].mean()
+
+        profiles.append(profile)
 
     return pd.DataFrame(profiles)
+
+
+def compute_top_k_metrics(X_test, y_test, y_proba, revenue_col=None, k_list=None):
+    """
+    Calcula precision y recall (y opcionalmente facturacion salvada) 
+    para los top K% clientes con mas riesgo.
+
+    Parameters
+    ----------
+    X_test : pd.DataFrame
+    y_test : pd.Series
+    y_proba : np.ndarray
+        Probabilidades de churn.
+    revenue_col : str, optional
+        Nombre de la columna de facturacion (ej: 'monthly_total_invoice').
+    k_list : list[int], optional
+        Lista de percentiles top a evaluar. Default: [5, 10, 20].
+
+    Returns
+    -------
+    pd.DataFrame con metricas de negocio por cada K%.
+    """
+    if k_list is None:
+        k_list = [5, 10, 20]
+
+    sorted_idx = np.argsort(-y_proba)
+    n_total = len(y_test)
+    total_churns = y_test.sum()
+
+    results = []
+    for k in k_list:
+        n_int = int(n_total * k / 100)
+        if n_int == 0:
+            continue
+
+        top_idx = sorted_idx[:n_int]
+        tp = y_test.iloc[top_idx].sum()
+        precision = tp / n_int
+        recall = tp / total_churns if total_churns > 0 else 0
+
+        res = {
+            "Top %": k,
+            "Intervenidos": n_int,
+            "Churns capturados": tp,
+            "Precision": precision,
+            "Recall": recall,
+        }
+
+        if revenue_col and revenue_col in X_test.columns:
+            invoices = X_test[revenue_col].values
+            inv_saved = invoices[top_idx][y_test.iloc[top_idx] == 1].sum()
+            res["Facturacion salvada"] = inv_saved
+
+        results.append(res)
+
+    return pd.DataFrame(results)

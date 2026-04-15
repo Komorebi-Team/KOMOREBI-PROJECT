@@ -1,4 +1,5 @@
 import pandas as pd
+from typing import Any
 
 from src.features import (
     compute_contract_churn,
@@ -16,6 +17,7 @@ def run_feature_engineering_pipeline(
     n_months: int = 2,
     churn_threshold: int = 5,
     include_right_censored: bool = True,
+    impute_config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     """
     Ejecuta el pipeline de feature engineering sobre los contratos preprocesados.
@@ -42,6 +44,9 @@ def run_feature_engineering_pipeline(
     include_right_censored : bool, default=True
         Indica si los contratos right-censored se mantienen en el dataset al
         calcular la etiqueta de churn para este horizonte temporal.
+
+    impute_config : dict, optional
+        Configuración de imputación para prepare_model_features.
 
     Returns
     -------
@@ -81,6 +86,6 @@ def run_feature_engineering_pipeline(
     df_features = add_contract_metadata(df_features, df)
 
     # 6. Imputación de valores nulos
-    df_features = prepare_model_features(df_features)
+    df_features = prepare_model_features(df_features, impute_config=impute_config)
 
     return df_features

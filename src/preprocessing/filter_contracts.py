@@ -281,6 +281,7 @@ def add_right_censoring_flag(
     )
 
     df = contract_summary.copy()
+    df["contrato_churn_date"] = pd.to_datetime(df["contrato_churn_date"], errors="coerce")
 
     if observation_end is None:
         obs_end = df["contract_end_period"].max()

@@ -1,4 +1,5 @@
 import pandas as pd
+from typing import Any
 
 from src.features import (
     compute_contract_churn,
@@ -14,7 +15,8 @@ from src.features import prepare_model_features
 def run_feature_engineering_pipeline(
     df_contracts: pd.DataFrame,
     n_months: int = 3,
-    include_right_censored: bool = True
+    include_right_censored: bool = True,
+    impute_config: dict[str, Any] | None = None
 ) -> pd.DataFrame:
     """
     Ejecuta el pipeline de feature engineering sobre los contratos preprocesados.
@@ -47,6 +49,8 @@ def run_feature_engineering_pipeline(
         - features de precio estable post-onboarding
         - variable objetivo `churned_{n_months}m`
         - metadatos contractuales añadidos al final del pipeline
+    impute_config : dict, optional
+        Configuración de imputación para prepare_model_features.
     """
     churn_col = f"churned_{n_months}m"
 
@@ -77,6 +81,6 @@ def run_feature_engineering_pipeline(
     df_features = add_contract_metadata(df_features, df)
 
     # 6. Imputación de valores nulos
-    df_features = prepare_model_features(df_features)
+    df_features = prepare_model_features(df_features, impute_config=impute_config)
 
     return df_features

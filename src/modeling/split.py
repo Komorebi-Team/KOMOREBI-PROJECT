@@ -1,4 +1,5 @@
 import logging
+from typing import List, Tuple, Any, Optional, Dict
 
 import numpy as np
 import pandas as pd
@@ -6,9 +7,11 @@ from sklearn.model_selection import GroupShuffleSplit
 
 logger = logging.getLogger(__name__)
 
-NON_FEATURE_COLS = [
-    "churned_3m",
+# Meta-columnas que nunca deben entrar al modelo por defecto
+DEFAULT_NON_FEATURE_COLS = [
     "advertiser_zrive_id",
+    "contract_id",
+    "period_int",
     "contract_start_date",
     "contract_end_period",
     "contrato_churn_date",
@@ -16,22 +19,39 @@ NON_FEATURE_COLS = [
     "advertiser_group_id",
     "advertiser_province",
     "is_right_censored",
-    "province_id"
+    "right_censoring_case",
 ]
 
 
-def get_feature_cols(df):
-    post_onboarding_cols = [
+def get_feature_cols(
+    df: pd.DataFrame, 
+    target: str,
+    feature_prefixes: List[str] | None = None,
+    extra_non_features: List[str] | None = None
+) -> List[str]:
+    """
+    Identifica dinámicamente las columnas de features.
+
+    Parameters
+    ----------
+    feature_prefixes : list[str], optional
+        Prefijos de columnas a considerar como features. 
+        Por defecto: ["invoice_post_", "stable_price", "n_months_post_onboarding"]
+    extra_non_features : list[str], optional
+        Columnas adicionales a excluir.
+    """
+    prefixes = feature_prefixes or ["monthly_", "usage_", "cost_", "conversion_", "premium_"]
+    exclude = set(DEFAULT_NON_FEATURE_COLS + [target])
+    if extra_non_features:
+        exclude.update(extra_non_features)
+
+    feature_cols = [
         c for c in df.columns
-        if c.startswith("invoice_post_")
-        or c.startswith("stable_price")
-        or c == "n_months_post_onboarding"
+        if any(c.startswith(p) for p in prefixes)
+        and c not in exclude
     ]
 
-    non_feature_cols = NON_FEATURE_COLS + post_onboarding_cols
-    exclude = set(non_feature_cols)
-
-    return [c for c in df.columns if c not in exclude]
+    return feature_cols
 
 
 def split_by_advertiser(
@@ -39,29 +59,18 @@ def split_by_advertiser(
     target: str = "churned_3m",
     test_size: float = 0.2,
     random_state: int = 42,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    feature_prefixes: List[str] | None = None,
+    extra_non_features: List[str] | None = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """
-    Split train/test agrupado por advertiser.
-
-    Todos los contratos de un mismo advertiser van al mismo set
-    para evitar leakage por advertiser.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Dataset a nivel contrato con features y target.
-    target : str
-        Nombre de la columna target.
-    test_size : float
-        Proporcion del test set.
-    random_state : int
-        Semilla para reproducibilidad.
-
-    Returns
-    -------
-    X_train, X_test, y_train, y_test
+    Split train/test agrupado por advertiser con parámetros flexibles.
     """
-    feature_cols = get_feature_cols(df)
+    feature_cols = get_feature_cols(
+        df, 
+        target, 
+        feature_prefixes=feature_prefixes, 
+        extra_non_features=extra_non_features
+    )
 
     y = df[target].astype(int)
     X = df[feature_cols].fillna(0)

@@ -107,6 +107,8 @@ def cross_validate_models(models, X_train, y_train, groups=None):
         })
         logger.info("CV %s: mean=%.3f, std=%.3f", name, scores.mean(), scores.std())
 
+    return pd.DataFrame(results) 
+
 def compute_shap_values(model, X_train, X_test):
     """
     Calcula valores SHAP para el conjunto de test.

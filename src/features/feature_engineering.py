@@ -314,6 +314,26 @@ def compute_behavior_features(df_first_months: pd.DataFrame) -> pd.DataFrame:
         / agg["monthly_published_ads"].replace(0, np.nan)
     )
 
+    agg["shows_per_lead"] = (
+        agg["monthly_shows"] / agg["monthly_leads"].replace(0, np.nan)
+    )
+
+    agg["calls_per_visit"] = (
+        agg["monthly_total_calls"] / agg["monthly_visits"].replace(0, np.nan)
+    )
+
+    agg["leads_per_price"] = (
+        agg["monthly_leads"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
+    )
+
+    agg["visits_per_price"] = (
+        agg["monthly_visits"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
+    )
+
+    agg["shows_per_price"] = (
+        agg["monthly_shows"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
+    )
+
     # 5. Tendencias
     for col in TREND_COLS:
         agg[f"{col}_trend"] = (
@@ -329,13 +349,13 @@ def compute_behavior_features(df_first_months: pd.DataFrame) -> pd.DataFrame:
         int(n_zero_invoice),
     )
 
-    logger.info(
-        "NaNs in ratios | usage_ratio: %s | cost_per_lead: %s | conversion_rate: %s | premium_ratio: %s",
-        int(agg["usage_ratio"].isna().sum()),
-        int(agg["cost_per_lead"].isna().sum()),
-        int(agg["conversion_rate"].isna().sum()),
-        int(agg["premium_ratio"].isna().sum()),
-    )
+    ratio_cols = [
+        "usage_ratio", "cost_per_lead", "conversion_rate", "premium_ratio",
+        "shows_per_lead", "calls_per_visit",
+        "leads_per_price", "visits_per_price", "shows_per_price",
+    ]
+    ratio_nans = {col: int(agg[col].isna().sum()) for col in ratio_cols}
+    logger.info("NaNs in ratios | %s", ratio_nans)
 
     return agg
 

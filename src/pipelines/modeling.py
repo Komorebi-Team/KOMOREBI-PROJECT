@@ -167,12 +167,11 @@ def run_modeling_pipeline(
     """
     feat_cfg = feature_config or {}
     X_train, X_test, y_train, y_test = split_by_advertiser(
-        df, 
-        target=target, 
+        df,
+        target=target,
         test_size=test_size,
         random_state=random_state,
-        feature_prefixes=feat_cfg.get("prefixes"),
-        extra_non_features=feat_cfg.get("extra_non_features")
+        extra_non_features=feat_cfg.get("extra_non_features"),
     )
     groups_train = df.loc[X_train.index, "advertiser_zrive_id"]
 

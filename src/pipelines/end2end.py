@@ -16,7 +16,8 @@ def run_end2end_pipeline(
     *,
     model_class: Any,
     params: dict[str, Any] | None = None,
-    n_months: int = 3,
+    n_months: int = 2,
+    churn_threshold: int = 5,
     include_right_censored: bool = False,
     observation_end: pd.Period | None = None,
     test_size: float = 0.2,
@@ -89,16 +90,17 @@ def run_end2end_pipeline(
         observation_end=observation_end,
     )
 
-    logger.info("=== [2/3] Feature engineering (n_months=%d) ===", n_months)
+    logger.info("=== [2/3] Feature engineering (n_months=%d, churn_threshold=%d) ===", n_months, churn_threshold)
     df_features = run_feature_engineering_pipeline(
         df_contracts,
         n_months=n_months,
+        churn_threshold=churn_threshold,
         include_right_censored=include_right_censored,
         impute_config=impute_config,
     )
 
     logger.info("=== [3/3] Modeling ===")
-    target = f"churned_{n_months}m"
+    target = f"churned_{churn_threshold}m"
     risk_config = risk_config or {}
     modeling_results = run_modeling_pipeline(
         df_features,

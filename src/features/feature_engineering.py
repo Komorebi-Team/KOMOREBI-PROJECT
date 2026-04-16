@@ -33,6 +33,39 @@ TREND_COLS = [
     "monthly_shows",
 ]
 
+PROVINCE_TO_CCAA = {
+    "A Coruña": "Galicia", "La Coruña": "Galicia", "Lugo": "Galicia",
+    "Ourense": "Galicia", "Orense": "Galicia", "Pontevedra": "Galicia",
+    "Asturias": "Asturias", "Cantabria": "Cantabria",
+    "Álava": "País Vasco", "Bizkaia": "País Vasco", "Vizcaya": "País Vasco",
+    "Guipúzcoa": "País Vasco", "Gipuzkoa": "País Vasco",
+    "Navarra": "Navarra", "La Rioja": "La Rioja",
+    "Huesca": "Aragón", "Teruel": "Aragón", "Zaragoza": "Aragón",
+    "Barcelona": "Cataluña", "Girona": "Cataluña",
+    "Lleida": "Cataluña", "Tarragona": "Cataluña",
+    "Alicante": "Comunidad Valenciana", "Castellón": "Comunidad Valenciana",
+    "Castellón/Castelló": "Comunidad Valenciana",
+    "Valencia": "Comunidad Valenciana", "València": "Comunidad Valenciana",
+    "Illes Balears": "Baleares", "Islas Baleares": "Baleares", "Baleares": "Baleares",
+    "León": "Castilla y León", "Palencia": "Castilla y León",
+    "Burgos": "Castilla y León", "Soria": "Castilla y León",
+    "Segovia": "Castilla y León", "Ávila": "Castilla y León",
+    "Salamanca": "Castilla y León", "Zamora": "Castilla y León",
+    "Valladolid": "Castilla y León",
+    "Madrid": "Comunidad de Madrid",
+    "Albacete": "Castilla-La Mancha", "Ciudad Real": "Castilla-La Mancha",
+    "Cuenca": "Castilla-La Mancha", "Guadalajara": "Castilla-La Mancha",
+    "Toledo": "Castilla-La Mancha",
+    "Cáceres": "Extremadura", "Badajoz": "Extremadura",
+    "Murcia": "Región de Murcia",
+    "Almería": "Andalucía", "Cádiz": "Andalucía", "Córdoba": "Andalucía",
+    "Granada": "Andalucía", "Huelva": "Andalucía", "Jaén": "Andalucía",
+    "Málaga": "Andalucía", "Sevilla": "Andalucía",
+    "Las Palmas": "Canarias", "Santa Cruz de Tenerife": "Canarias",
+    "Tenerife": "Canarias",
+    "Ceuta": "Ceuta", "Melilla": "Melilla",
+}
+
 
 def compute_contract_churn(
     df: pd.DataFrame,
@@ -595,6 +628,19 @@ def add_contract_metadata(
             "Contracts with advertiser group: %s/%s",
             int(out["has_group"].fillna(False).sum()),
             len(out),
+        )
+
+    if "advertiser_province" in out.columns:
+        out["region"] = out["advertiser_province"].map(PROVINCE_TO_CCAA)
+        region_dummies = pd.get_dummies(out["region"], prefix="region", dummy_na=False)
+        out = pd.concat([out, region_dummies], axis=1)
+        out = out.drop(columns=["region"])
+
+        logger.info(
+            "CCAA mapped: %s/%s contracts, %s regions",
+            int(out[[c for c in out.columns if c.startswith("region_")]].sum(axis=1).gt(0).sum()),
+            len(out),
+            int(region_dummies.shape[1]),
         )
 
     return out

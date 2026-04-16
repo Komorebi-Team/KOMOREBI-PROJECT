@@ -15,3 +15,4 @@ from .evaluate import (
     plot_feature_importance,
     build_risk_profiles,
 )
+from .lightgbm_workflow import run_lightgbm_feature_ablation_study

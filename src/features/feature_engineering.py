@@ -334,6 +334,42 @@ def compute_behavior_features(df_first_months: pd.DataFrame) -> pd.DataFrame:
         agg["monthly_shows"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
     )
 
+    agg["contracted_ads_per_price"] = (
+        agg["monthly_contracted_ads"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
+    )
+
+    agg["emails_per_price"] = (
+        agg["monthly_total_emails"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
+    )
+
+    agg["calls_per_price"] = (
+        agg["monthly_total_calls"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
+    )
+
+    agg["invoice_per_show"] = (
+        agg["monthly_total_invoice"] / agg["monthly_shows"].replace(0, np.nan)
+    )
+
+    agg["invoice_per_visit"] = (
+        agg["monthly_total_invoice"] / agg["monthly_visits"].replace(0, np.nan)
+    )
+
+    agg["phone_views_per_visit"] = (
+        agg["monthly_total_phone_views"] / agg["monthly_visits"].replace(0, np.nan)
+    )
+
+    agg["unique_leads_ratio"] = (
+        agg["monthly_unique_leads"] / agg["monthly_leads"].replace(0, np.nan)
+    )
+
+    agg["calls_per_lead"] = (
+        agg["monthly_total_calls"] / agg["monthly_leads"].replace(0, np.nan)
+    )
+
+    agg["emails_per_visit"] = (
+        agg["monthly_total_emails"] / agg["monthly_visits"].replace(0, np.nan)
+    )
+
     # 5. Tendencias
     for col in TREND_COLS:
         agg[f"{col}_trend"] = (
@@ -353,6 +389,10 @@ def compute_behavior_features(df_first_months: pd.DataFrame) -> pd.DataFrame:
         "usage_ratio", "cost_per_lead", "conversion_rate", "premium_ratio",
         "shows_per_lead", "calls_per_visit",
         "leads_per_price", "visits_per_price", "shows_per_price",
+        "contracted_ads_per_price", "emails_per_price", "calls_per_price",
+        "invoice_per_show", "invoice_per_visit",
+        "phone_views_per_visit", "unique_leads_ratio",
+        "calls_per_lead", "emails_per_visit",
     ]
     ratio_nans = {col: int(agg[col].isna().sum()) for col in ratio_cols}
     logger.info("NaNs in ratios | %s", ratio_nans)

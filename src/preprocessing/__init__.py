@@ -1,10 +1,9 @@
 from .prepare_fct import prepare_fct
-from .build_contracts import (
+from .contracts import (
     add_contract_id,
     build_contract_summary,
-    add_contract_end_period,
 )
-from .filter_contracts import (
+from .censoring import (
     filter_contracts_with_valid_start,
     add_right_censoring_flag,
 )

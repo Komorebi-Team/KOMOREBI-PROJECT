@@ -11,10 +11,12 @@ logger = logging.getLogger(__name__)
 BEHAVIOR_COLS = [
     "monthly_contracted_ads",
     "monthly_published_ads",
+    "monthly_unique_published_ads",
     "monthly_distinct_ads",
     "monthly_oro_ads",
     "monthly_plata_ads",
     "monthly_destacados_ads",
+    "monthly_pepitas_ads",
     "monthly_shows",
     "monthly_visits",
     "monthly_leads",
@@ -22,6 +24,9 @@ BEHAVIOR_COLS = [
     "monthly_total_calls",
     "monthly_total_emails",
     "monthly_total_invoice",
+    "monthly_total_reference_price",
+    "monthly_unique_calls",
+    "monthly_unique_emails",
     "monthly_unique_leads",
     "monthly_avg_ad_price",
 ]
@@ -33,7 +38,7 @@ TREND_COLS = [
     "monthly_shows",
 ]
 
-PROVINCE_TO_CCAA = {
+PROVINCE_TO_REGION = {
     "A Coruña": "Galicia", "La Coruña": "Galicia", "Lugo": "Galicia",
     "Ourense": "Galicia", "Orense": "Galicia", "Pontevedra": "Galicia",
     "Asturias": "Asturias", "Cantabria": "Cantabria",
@@ -263,38 +268,19 @@ def _slope(x, y):
     )
 
 
-def compute_behavior_features(df_first_months: pd.DataFrame) -> pd.DataFrame:
+def compute_behavior_features(
+    df_first_months: pd.DataFrame,
+    include_absolute_features: bool = True,
+    include_base_ratios: bool = True,
+    include_price_normalized_features: bool = False,
+) -> pd.DataFrame:
     """
     Agrega métricas de comportamiento de los primeros meses a nivel contrato.
 
-    A partir de un dataframe mensual ya restringido a los primeros meses de cada
-    contrato, construye un dataframe a nivel `contract_id` con:
-
-    - medias por contrato
-    - desviaciones estándar por contrato
-    - valores mensuales individuales (`month1`, `month2`, ..., `monthN`)
-    - ratios derivados
-    - tendencias lineales para variables seleccionadas
-
-    Criterio para `monthly_total_invoice`
-    -------------------------------------
-    Los valores iguales a `0` se tratan como no informativos y se convierten en
-    `NaN` antes de calcular las features derivadas de facturación.
-
-    Parameters
-    ----------
-    df_first_months : pd.DataFrame
-        DataFrame mensual con los primeros meses de cada contrato. Debe incluir:
-        - `contract_id`
-        - `month_number`
-        - columnas definidas en `BEHAVIOR_COLS`
-        - columnas definidas en `TREND_COLS`
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame a nivel contrato con una fila por `contract_id` y las features
-        agregadas de comportamiento.
+    Permite activar/desactivar bloques de features:
+    - features absolutas
+    - ratios base
+    - ratios normalizadas por invoice
     """
     required_cols = {"contract_id", "month_number"} | set(BEHAVIOR_COLS) | set(TREND_COLS)
     validate_columns(df_first_months, required_cols, "compute_behavior_features")
@@ -303,132 +289,237 @@ def compute_behavior_features(df_first_months: pd.DataFrame) -> pd.DataFrame:
 
     df_clean = df_first_months.copy()
 
-    n_zero_invoice = (df_clean["monthly_total_invoice"] == 0).sum()
+    n_zero_invoice = int((df_clean["monthly_total_invoice"] == 0).sum())
     df_clean.loc[df_clean["monthly_total_invoice"] == 0, "monthly_total_invoice"] = np.nan
 
-    # 1. Media por contrato
-    agg = df_clean.groupby("contract_id")[BEHAVIOR_COLS].mean()
-    agg["monthly_total_invoice"] = agg["monthly_total_invoice"].fillna(0)
+    feature_blocks = []
+    ratio_cols = []
 
-    # 2. Std por contrato
-    behavior_std = df_clean.groupby("contract_id")[BEHAVIOR_COLS].std().fillna(0)
-    behavior_std.columns = [f"{col}_std" for col in BEHAVIOR_COLS]
-    agg = agg.join(behavior_std)
+    # --------------------------------------------------
+    # 1. FEATURES ABSOLUTAS
+    # --------------------------------------------------
+    if include_absolute_features:
+        agg_abs = df_clean.groupby("contract_id")[BEHAVIOR_COLS].mean()
+        agg_abs["monthly_total_invoice"] = agg_abs["monthly_total_invoice"].fillna(0)
 
-    # 3. Valor de cada mes individual
-    pivoted = df_clean.pivot_table(
-        index="contract_id",
-        columns="month_number",
-        values=BEHAVIOR_COLS,
-        aggfunc="first",
-    )
-    pivoted.columns = [f"{col}_month{int(month)}" for col, month in pivoted.columns]
-    agg = agg.join(pivoted)
+        behavior_std = df_clean.groupby("contract_id")[BEHAVIOR_COLS].std().fillna(0)
+        behavior_std.columns = [f"{col}_std" for col in BEHAVIOR_COLS]
+        agg_abs = agg_abs.join(behavior_std)
 
-    # 4. Ratios
-    agg["usage_ratio"] = (
-        agg["monthly_published_ads"] / agg["monthly_contracted_ads"].replace(0, np.nan)
-    )
-
-    agg["cost_per_lead"] = (
-        agg["monthly_total_invoice"] / agg["monthly_leads"].replace(0, np.nan)
-    )
-
-    agg["conversion_rate"] = (
-        agg["monthly_leads"] / agg["monthly_visits"].replace(0, np.nan)
-    )
-
-    agg["premium_ratio"] = (
-        (
-            agg["monthly_oro_ads"]
-            + agg["monthly_plata_ads"]
-            + agg["monthly_destacados_ads"]
+        pivoted = df_clean.pivot_table(
+            index="contract_id",
+            columns="month_number",
+            values=BEHAVIOR_COLS,
+            aggfunc="first",
         )
-        / agg["monthly_published_ads"].replace(0, np.nan)
-    )
+        pivoted.columns = [f"{col}_month{int(month)}" for col, month in pivoted.columns]
+        agg_abs = agg_abs.join(pivoted)
 
-    agg["shows_per_lead"] = (
-        agg["monthly_shows"] / agg["monthly_leads"].replace(0, np.nan)
-    )
+        for col in TREND_COLS:
+            agg_abs[f"{col}_trend"] = (
+                df_clean.groupby("contract_id")[["month_number", col]]
+                .apply(lambda g: _slope(g["month_number"], g[col]))
+            )
 
-    agg["calls_per_visit"] = (
-        agg["monthly_total_calls"] / agg["monthly_visits"].replace(0, np.nan)
-    )
+        feature_blocks.append(agg_abs)
 
-    agg["leads_per_price"] = (
-        agg["monthly_leads"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
-    )
+    # Base común para ratios
+    agg_base = df_clean.groupby("contract_id")[BEHAVIOR_COLS].mean()
+    agg_base["monthly_total_invoice"] = agg_base["monthly_total_invoice"].fillna(0)
 
-    agg["visits_per_price"] = (
-        agg["monthly_visits"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
-    )
+    invoice_den = agg_base["monthly_total_invoice"].replace(0, np.nan)
 
-    agg["shows_per_price"] = (
-        agg["monthly_shows"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
-    )
+    # --------------------------------------------------
+    # 2. RATIOS BASE (versión original)
+    # --------------------------------------------------
+    if include_base_ratios:
+        ratio_df = pd.DataFrame(index=agg_base.index)
 
-    agg["contracted_ads_per_price"] = (
-        agg["monthly_contracted_ads"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
-    )
-
-    agg["emails_per_price"] = (
-        agg["monthly_total_emails"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
-    )
-
-    agg["calls_per_price"] = (
-        agg["monthly_total_calls"] / agg["monthly_avg_ad_price"].replace(0, np.nan)
-    )
-
-    agg["invoice_per_show"] = (
-        agg["monthly_total_invoice"] / agg["monthly_shows"].replace(0, np.nan)
-    )
-
-    agg["invoice_per_visit"] = (
-        agg["monthly_total_invoice"] / agg["monthly_visits"].replace(0, np.nan)
-    )
-
-    agg["phone_views_per_visit"] = (
-        agg["monthly_total_phone_views"] / agg["monthly_visits"].replace(0, np.nan)
-    )
-
-    agg["unique_leads_ratio"] = (
-        agg["monthly_unique_leads"] / agg["monthly_leads"].replace(0, np.nan)
-    )
-
-    agg["calls_per_lead"] = (
-        agg["monthly_total_calls"] / agg["monthly_leads"].replace(0, np.nan)
-    )
-
-    agg["emails_per_visit"] = (
-        agg["monthly_total_emails"] / agg["monthly_visits"].replace(0, np.nan)
-    )
-
-    # 5. Tendencias
-    for col in TREND_COLS:
-        agg[f"{col}_trend"] = (
-            df_clean.groupby("contract_id")[["month_number", col]]
-            .apply(lambda g: _slope(g["month_number"], g[col]))
+        ratio_df["usage_ratio"] = (
+            agg_base["monthly_published_ads"]
+            / agg_base["monthly_contracted_ads"].replace(0, np.nan)
         )
+
+        ratio_df["distinct_ad_ratio"] = (
+            agg_base["monthly_distinct_ads"]
+            / agg_base["monthly_published_ads"].replace(0, np.nan)
+        )
+
+        ratio_df["cost_per_lead"] = (
+            agg_base["monthly_total_invoice"]
+            / agg_base["monthly_leads"].replace(0, np.nan)
+        )
+
+        # Ratios Financieros y Calidad de Leads añadidos recientemente
+        ratio_df["discount_ratio"] = 1.0 - (
+            agg_base["monthly_total_invoice"]
+            / agg_base["monthly_total_reference_price"].replace(0, np.nan)
+        )
+        
+        ratio_df["unique_calls_ratio"] = (
+            agg_base["monthly_unique_calls"]
+            / agg_base["monthly_total_calls"].replace(0, np.nan)
+        )
+        
+        ratio_df["unique_emails_ratio"] = (
+            agg_base["monthly_unique_emails"]
+            / agg_base["monthly_total_emails"].replace(0, np.nan)
+        )
+
+        # Funnel ratios
+        ratio_df["show_to_visit_rate"] = (
+            agg_base["monthly_visits"]
+            / agg_base["monthly_shows"].replace(0, np.nan)
+        )
+
+        ratio_df["visit_to_lead_rate"] = (
+            agg_base["monthly_leads"]
+            / agg_base["monthly_visits"].replace(0, np.nan)
+        )
+
+        ratio_df["show_to_lead_rate"] = (
+            agg_base["monthly_leads"]
+            / agg_base["monthly_shows"].replace(0, np.nan)
+        )
+
+        # Premium mix
+        ratio_df["premium_ratio"] = (
+            (
+                agg_base["monthly_oro_ads"]
+                + agg_base["monthly_plata_ads"]
+                + agg_base["monthly_destacados_ads"]
+            )
+            / agg_base["monthly_published_ads"].replace(0, np.nan)
+        )
+
+        ratio_df["oro_ratio"] = (
+            agg_base["monthly_oro_ads"]
+            / agg_base["monthly_published_ads"].replace(0, np.nan)
+        )
+
+        ratio_df["plata_ratio"] = (
+            agg_base["monthly_plata_ads"]
+            / agg_base["monthly_published_ads"].replace(0, np.nan)
+        )
+
+        ratio_df["destacados_ratio"] = (
+            agg_base["monthly_destacados_ads"]
+            / agg_base["monthly_published_ads"].replace(0, np.nan)
+        )
+
+        # Performance per published ad
+        ratio_df["shows_per_published_ad"] = (
+            agg_base["monthly_shows"]
+            / agg_base["monthly_published_ads"].replace(0, np.nan)
+        )
+
+        ratio_df["visits_per_published_ad"] = (
+            agg_base["monthly_visits"]
+            / agg_base["monthly_published_ads"].replace(0, np.nan)
+        )
+
+        ratio_df["leads_per_published_ad"] = (
+            agg_base["monthly_leads"]
+            / agg_base["monthly_published_ads"].replace(0, np.nan)
+        )
+
+        ratio_df["unique_leads_per_published_ad"] = (
+            agg_base["monthly_unique_leads"]
+            / agg_base["monthly_published_ads"].replace(0, np.nan)
+        )
+
+        # Lead quality / contact intensity
+        ratio_df["unique_lead_ratio"] = (
+            agg_base["monthly_unique_leads"]
+            / agg_base["monthly_leads"].replace(0, np.nan)
+        )
+
+        ratio_df["phone_views_per_lead"] = (
+            agg_base["monthly_total_phone_views"]
+            / agg_base["monthly_leads"].replace(0, np.nan)
+        )
+
+        ratio_df["calls_per_lead"] = (
+            agg_base["monthly_total_calls"]
+            / agg_base["monthly_leads"].replace(0, np.nan)
+        )
+
+        ratio_df["emails_per_lead"] = (
+            agg_base["monthly_total_emails"]
+            / agg_base["monthly_leads"].replace(0, np.nan)
+        )
+
+        ratio_cols.extend(ratio_df.columns.tolist())
+        feature_blocks.append(ratio_df)
+
+    # --------------------------------------------------
+    # 3. RATIOS OUTPUT / INVOICE
+    # --------------------------------------------------
+    if include_price_normalized_features:
+        price_ratio_df = pd.DataFrame(index=agg_base.index)
+
+        price_ratio_df["leads_per_invoice"] = (
+            agg_base["monthly_leads"] / invoice_den
+        )
+        price_ratio_df["visits_per_invoice"] = (
+            agg_base["monthly_visits"] / invoice_den
+        )
+        price_ratio_df["shows_per_invoice"] = (
+            agg_base["monthly_shows"] / invoice_den
+        )
+        price_ratio_df["published_ads_per_invoice"] = (
+            agg_base["monthly_published_ads"] / invoice_den
+        )
+        price_ratio_df["contracted_ads_per_invoice"] = (
+            agg_base["monthly_contracted_ads"] / invoice_den
+        )
+        price_ratio_df["unique_leads_per_invoice"] = (
+            agg_base["monthly_unique_leads"] / invoice_den
+        )
+        price_ratio_df["calls_per_invoice"] = (
+            agg_base["monthly_total_calls"] / invoice_den
+        )
+        price_ratio_df["emails_per_invoice"] = (
+            agg_base["monthly_total_emails"] / invoice_den
+        )
+        price_ratio_df["phone_views_per_invoice"] = (
+            agg_base["monthly_total_phone_views"] / invoice_den
+        )
+        price_ratio_df["premium_ads_per_invoice"] = (
+            (
+                agg_base["monthly_oro_ads"]
+                + agg_base["monthly_plata_ads"]
+                + agg_base["monthly_destacados_ads"]
+            )
+            / invoice_den
+        )
+
+        ratio_cols.extend(price_ratio_df.columns.tolist())
+        feature_blocks.append(price_ratio_df)
+
+    if not feature_blocks:
+        raise ValueError(
+            "Debes activar al menos un bloque de features: "
+            "include_absolute_features, include_base_ratios o include_price_normalized_features."
+        )
+
+    agg = pd.concat(feature_blocks, axis=1)
 
     logger.info(
         "Behavior features built for %s contracts (input contracts: %s). "
-        "Converted %s zero invoices to NaN.",
+        "Converted %s zero invoices to NaN. "
+        "include_absolute_features=%s | include_base_ratios=%s | include_price_normalized_features=%s",
         agg.index.nunique(),
         n_contracts_input,
-        int(n_zero_invoice),
+        n_zero_invoice,
+        include_absolute_features,
+        include_base_ratios,
+        include_price_normalized_features,
     )
 
-    ratio_cols = [
-        "usage_ratio", "cost_per_lead", "conversion_rate", "premium_ratio",
-        "shows_per_lead", "calls_per_visit",
-        "leads_per_price", "visits_per_price", "shows_per_price",
-        "contracted_ads_per_price", "emails_per_price", "calls_per_price",
-        "invoice_per_show", "invoice_per_visit",
-        "phone_views_per_visit", "unique_leads_ratio",
-        "calls_per_lead", "emails_per_visit",
-    ]
-    ratio_nans = {col: int(agg[col].isna().sum()) for col in ratio_cols}
-    logger.info("NaNs in ratios | %s", ratio_nans)
+    if ratio_cols:
+        ratio_nans = {col: int(agg[col].isna().sum()) for col in ratio_cols}
+        logger.info("NaNs in ratios | %s", ratio_nans)
 
     return agg
 
@@ -539,6 +630,7 @@ def compute_stable_price(df: pd.DataFrame, n_months: int = 3) -> pd.DataFrame:
 def add_contract_metadata(
     df_features: pd.DataFrame,
     df_contracts: pd.DataFrame,
+    add_region: bool = True
 ) -> pd.DataFrame:
     """
     Añade al dataframe de features los metadatos contractuales ya calculados
@@ -596,30 +688,28 @@ def add_contract_metadata(
         "contrato_churn_date",
         "contract_end_period",
         "contract_duration_months",
-        "is_right_censored"
+        "is_right_censored",
     ]
 
     metadata_cols = [col for col in candidate_cols if col in active.columns]
 
-    contract_meta = (
-        active.groupby("contract_id")[metadata_cols]
-        .first()
-    )
+    contract_meta = active.groupby("contract_id")[metadata_cols].first()
 
     if "advertiser_group_id" in contract_meta.columns:
         contract_meta["has_group"] = contract_meta["advertiser_group_id"].notna()
 
-    n_feature_contracts = df_features.index.nunique()
-    n_meta_contracts = contract_meta.index.nunique()
-
     out = df_features.join(contract_meta, how="left")
 
-    n_unmatched = int(out["advertiser_zrive_id"].isna().sum()) if "advertiser_zrive_id" in out.columns else None
+    n_unmatched = (
+        int(out["advertiser_zrive_id"].isna().sum())
+        if "advertiser_zrive_id" in out.columns
+        else None
+    )
 
     logger.info(
         "Contract metadata joined: feature_contracts=%s, metadata_contracts=%s, unmatched_contracts=%s",
-        n_feature_contracts,
-        n_meta_contracts,
+        df_features.index.nunique(),
+        contract_meta.index.nunique(),
         n_unmatched,
     )
 
@@ -630,17 +720,14 @@ def add_contract_metadata(
             len(out),
         )
 
-    if "advertiser_province" in out.columns:
-        out["region"] = out["advertiser_province"].map(PROVINCE_TO_CCAA)
-        region_dummies = pd.get_dummies(out["region"], prefix="region", dummy_na=False)
-        out = pd.concat([out, region_dummies], axis=1)
-        out = out.drop(columns=["region"])
+    if add_region and "advertiser_province" in out.columns:
+        out["region"] = out["advertiser_province"].map(PROVINCE_TO_REGION)
 
         logger.info(
-            "CCAA mapped: %s/%s contracts, %s regions",
-            int(out[[c for c in out.columns if c.startswith("region_")]].sum(axis=1).gt(0).sum()),
+            "Region mapped for %s/%s contracts. unique_regions=%s",
+            int(out["region"].notna().sum()),
             len(out),
-            int(region_dummies.shape[1]),
+            int(out["region"].nunique(dropna=True)),
         )
 
     return out

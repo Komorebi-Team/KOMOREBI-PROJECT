@@ -227,12 +227,12 @@ def filter_contracts_with_valid_start(df: pd.DataFrame) -> pd.DataFrame:
     return df_contracts
 
 def add_right_censoring_flag(
-    contract_summary: pd.DataFrame,
+    df: pd.DataFrame,
     observation_end: Optional[pd.Period] = None,
 ) -> pd.DataFrame:
     """
     Añade las columnas `is_right_censored` y `right_censoring_case` a un dataframe
-    a nivel contrato.
+    a nivel mensual (aplicando transformaciones en ventana) manteniendo su granularidad.
 
     Definición
     ----------
@@ -254,10 +254,10 @@ def add_right_censoring_flag(
 
     Parameters
     ----------
-    contract_summary : pd.DataFrame
-        DataFrame a nivel contrato con, al menos, las columnas:
+    df : pd.DataFrame
+        DataFrame mensual con, al menos, las columnas:
         - `contract_id`
-        - `contract_end_period` (Period[M])
+        - `period_int` (Period[M])
         - `contrato_churn_date` (datetime)
 
     observation_end : pd.Period, optional
@@ -267,75 +267,79 @@ def add_right_censoring_flag(
     Returns
     -------
     pd.DataFrame
-        DataFrame con las columnas `is_right_censored` y `right_censoring_case`,
-        excluyendo los contratos clasificados como `inconsistent_churn_before_window_end`.
+        DataFrame original con las columnas `contract_end_period`, `is_right_censored` 
+        y `right_censoring_case`, excluyendo los contratos clasificados como 
+        `inconsistent_churn_before_window_end`.
     """
     validate_columns(
-        df=contract_summary,
+        df=df,
         required_cols={
             "contract_id",
-            "contract_end_period",
+            "period_int",
             "contrato_churn_date",
         },
         func_name="add_right_censoring_flag",
     )
 
-    df = contract_summary.copy()
+    data = df.copy()
+
+    # Operación de ventana: encontramos el último mes para cada contrato de forma global
+    data["contract_end_period"] = data.groupby("contract_id")["period_int"].transform("max")
 
     if observation_end is None:
-        obs_end = df["contract_end_period"].max()
+        obs_end = data["contract_end_period"].max()
     else:
         obs_end = observation_end
 
-    churn_period = df["contrato_churn_date"].dt.to_period("M")
-    reaches_window_end = df["contract_end_period"] == obs_end
-    ends_before_window_end = df["contract_end_period"] < obs_end
+    churn_period = data["contrato_churn_date"].dt.to_period("M")
+    reaches_window_end = data["contract_end_period"] == obs_end
+    ends_before_window_end = data["contract_end_period"] < obs_end
 
     inconsistent_churn_before_window_end = (
         reaches_window_end
-        & df["contrato_churn_date"].notna()
+        & data["contrato_churn_date"].notna()
         & (churn_period < obs_end)
     )
 
     missing_churn_before_window_end = (
         ends_before_window_end
-        & df["contrato_churn_date"].isna()
+        & data["contrato_churn_date"].isna()
     )
 
     observed_churn_at_window_end = (
         reaches_window_end
-        & df["contrato_churn_date"].notna()
+        & data["contrato_churn_date"].notna()
         & (churn_period == obs_end)
     )
 
     right_censored = (
         reaches_window_end
         & (
-            df["contrato_churn_date"].isna()
+            data["contrato_churn_date"].isna()
             | (churn_period > obs_end)
         )
     )
 
-    df["right_censoring_case"] = "ended_before_window_end"
+    data["right_censoring_case"] = "ended_before_window_end"
 
-    df.loc[observed_churn_at_window_end, "right_censoring_case"] = (
+    data.loc[observed_churn_at_window_end, "right_censoring_case"] = (
         "observed_churn_at_window_end"
     )
-    df.loc[right_censored, "right_censoring_case"] = "right_censored"
-    df.loc[inconsistent_churn_before_window_end, "right_censoring_case"] = (
+    data.loc[right_censored, "right_censoring_case"] = "right_censored"
+    data.loc[inconsistent_churn_before_window_end, "right_censoring_case"] = (
         "inconsistent_churn_before_window_end"
     )
-    df.loc[missing_churn_before_window_end, "right_censoring_case"] = (
+    data.loc[missing_churn_before_window_end, "right_censoring_case"] = (
         "missing_churn_before_window_end"
     )
 
-    df["is_right_censored"] = right_censored
+    data["is_right_censored"] = right_censored
     
-    # Logging
-    total_contracts_before_filter = len(df)
-    n_right_censored = int(df["is_right_censored"].sum())
-    n_inconsistent_boundary = int(inconsistent_churn_before_window_end.sum())
-    n_missing_churn_before_end = int(missing_churn_before_window_end.sum())
+    # Logging usando nunique() ya que trabajamos sobre granularidad mensual
+    total_contracts_before_filter = data["contract_id"].nunique()
+    n_right_censored = data.loc[data["is_right_censored"], "contract_id"].nunique()
+    n_inconsistent_boundary = data.loc[inconsistent_churn_before_window_end, "contract_id"].nunique()
+    n_missing_churn_before_end = data.loc[missing_churn_before_window_end, "contract_id"].nunique()
 
     logger.info(
         "[add_right_censoring_flag] Right censored contracts before filtering: %s/%s (%.2f%%)",
@@ -357,10 +361,11 @@ def add_right_censoring_flag(
         n_missing_churn_before_end,
     )
 
-    df = df.loc[df["right_censoring_case"] != "inconsistent_churn_before_window_end"].copy()
+    # El filtro operará nativamente borrando todas las filas temporales de dicho contrato
+    data = data.loc[data["right_censoring_case"] != "inconsistent_churn_before_window_end"].copy()
 
-    total_contracts_after_filter = len(df)
-    n_right_censored_after_filter = int(df["is_right_censored"].sum())
+    total_contracts_after_filter = data["contract_id"].nunique()
+    n_right_censored_after_filter = data.loc[data["is_right_censored"], "contract_id"].nunique()
 
     logger.info(
         "Contracts retained after removing inconsistent cases: %s/%s",
@@ -378,4 +383,4 @@ def add_right_censoring_flag(
         ),
     )
 
-    return df
+    return data

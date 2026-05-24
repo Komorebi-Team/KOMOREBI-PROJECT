@@ -9,13 +9,13 @@ import pandas as pd
 from sklearn.model_selection import GroupKFold, cross_val_score
 
 from src.modeling.split import split_by_advertiser
-from src.modeling.evaluate import (
+from src.modeling.metrics import (
     evaluate_model,
     find_best_threshold,
     build_risk_profiles,
     compute_top_k_metrics,
-    compute_shap_values,
 )
+from src.modeling.plots import compute_shap_values
 from src.utils import compute_class_sample_weight
 
 logger = logging.getLogger(__name__)

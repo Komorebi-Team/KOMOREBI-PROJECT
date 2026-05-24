@@ -121,7 +121,7 @@ def add_contract_id(df : pd.DataFrame) -> pd.DataFrame:
 def build_contract_summary(df_contracts: pd.DataFrame) -> pd.DataFrame:
     """
     Construye un summary a nivel contrato con la información mínima necesaria
-    para cálculos posteriores.
+    para cálculos posteriores, incluyendo el último mes observado de forma nativa.
 
     Parameters
     ----------
@@ -146,6 +146,7 @@ def build_contract_summary(df_contracts: pd.DataFrame) -> pd.DataFrame:
             "advertiser_zrive_id",
             "contract_start_date",
             "contrato_churn_date",
+            "period_int",
         },
         func_name="build_contract_summary",
     )
@@ -157,45 +158,6 @@ def build_contract_summary(df_contracts: pd.DataFrame) -> pd.DataFrame:
             advertiser_zrive_id=("advertiser_zrive_id", "first"),
             contract_start_date=("contract_start_date", "first"),
             contrato_churn_date=("contrato_churn_date", "first"),
+            contract_end_period=("period_int", "max"),
         )
     )
-
-def add_contract_end_period(
-    contract_summary: pd.DataFrame,
-    df_contracts: pd.DataFrame,
-) -> pd.DataFrame:
-    """
-    Añade el último periodo observado de cada contrato.
-
-    Parameters
-    ----------
-    contract_summary : pd.DataFrame
-        DataFrame a nivel contrato.
-    df_contracts : pd.DataFrame
-        DataFrame original a nivel mensual.
-
-    Returns
-    -------
-    pd.DataFrame
-        Summary con la columna `contract_end_period`.
-    """
-
-    validate_columns(
-        df=contract_summary,
-        required_cols={"contract_id"},
-        func_name="add_contract_end_period",
-    )
-
-    validate_columns(
-        df=df_contracts,
-        required_cols={"contract_id", "period_int"},
-        func_name="add_contract_end_period",
-    )
-    
-    end_period = (
-        df_contracts
-        .groupby("contract_id", as_index=False)
-        .agg(contract_end_period=("period_int", "max"))
-    )
-
-    return contract_summary.merge(end_period, on="contract_id", how="left")

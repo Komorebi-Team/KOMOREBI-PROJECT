@@ -2,8 +2,8 @@
 > **Zrive Applied Data Science Project | 4Q25**
 
 ![Zrive](https://img.shields.io/badge/Program-Zrive%20Applied%20Data%20Science-blueviolet)
-![Industry](https://img.shields.io/badge/Industry-Automotive-grey)
-![Status](https://img.shields.io/badge/Status-In%20Progress-yellow)
+![Industry](https://img.shields.io/badge/Industry-Automotive-blue)
+![Status](https://img.shields.io/badge/Status-Finished-green)
 
 ## 🎯 Contexto del Proyecto
 

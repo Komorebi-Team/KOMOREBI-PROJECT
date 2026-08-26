@@ -1,14 +1,18 @@
-# 📈 Sumauto: Estimación de Precio Objetivo para Clientes Recientes
+# 📈 Estimación de Precio Objetivo para Clientes Recientes
 > **Zrive Applied Data Science Project | 4Q25**
 
 ![Zrive](https://img.shields.io/badge/Program-Zrive%20Applied%20Data%20Science-blueviolet)
-![Client](https://img.shields.io/badge/Client-Sumauto-red)
+![Industry](https://img.shields.io/badge/Industry-Automotive-grey)
 ![Status](https://img.shields.io/badge/Status-In%20Progress-yellow)
 
 ## 🎯 Contexto del Proyecto
-Sumauto es un grupo de portales de anuncios clasificados de vehículos. Su modelo de negocio se basa en atraer tráfico y derivarlo a los anuncios de distintos profesionales y concesionarios. 
 
-El reto principal de este proyecto es optimizar la estrategia de precios (pricing) tras el periodo inicial de captación (*onboarding*), que suele durar 3 meses. Es crítico determinar la **tarifa estable** de mercado: si el precio es muy alto, el cliente se marcha (*churn*); si es muy bajo, se pierde margen de beneficio.
+
+Este proyecto se desarrolló para una empresa digital del sector de la automoción que conecta la demanda online con profesionales y concesionarios.
+
+El reto consiste en optimizar la estrategia de precios una vez finalizado el periodo inicial de captación y adaptación del cliente, que suele durar aproximadamente tres meses. El objetivo es determinar una tarifa estable adecuada: un precio demasiado elevado puede incrementar el riesgo de abandono, mientras que un precio demasiado bajo reduce el margen de beneficio.
+
+Por motivos de confidencialidad, la identidad de la empresa y determinadas características de los datos han sido anonimizadas.
 
 ## 🛠️ Objetivos del Proyecto
 * **Definir la Variable Objetivo:** Construir una métrica que represente la facturación real consolidada (Precio Estable) tras el periodo de onboarding.
